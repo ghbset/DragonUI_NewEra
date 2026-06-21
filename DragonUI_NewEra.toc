@@ -1,0 +1,76 @@
+## Interface: 30300
+## Title: |cff1784d1DragonUI|r |cffffffffNew Era|r
+## Notes: Dragonflight-style panels for 3.3.5a — downport of NewEra (Classic 1.15) onto DragonUI.
+## Author: DragonUI_NewEra team
+## Version: 0.1.0
+## Dependencies: DragonUI
+## OptionalDeps: !!!ClassicAPI, DragonUI_Options
+## SavedVariables: DragonUI_NewEraDB
+
+bootstrap.lua
+
+# --- compat: modern-API shim layer (owner: API Bridge Engineer) ---
+# Loads FIRST after bootstrap. Each file ensures a modern global exists on 3.3.5a
+# (delegating to !!!ClassicAPI when present, else a vendored shim). See compat/COVERAGE.md.
+compat\Compat.lua
+compat\Mixin.lua
+compat\C_Timer.lua
+compat\C_Texture.lua
+compat\C_Container.lua
+compat\C_Item.lua
+compat\C_Spell.lua
+compat\C_Map.lua
+compat\C_EquipmentSet.lua
+
+# --- core: downported NewEra Core chrome toolkit (owner: Core/Chrome Engineer) ---
+core\FrameUtil.lua
+core\Texture.lua
+core\NineSlice.lua
+core\NineSliceLayouts.lua
+core\PanelChrome.lua
+core\Portrait.lua
+core\Tabs.lua
+core\ButtonSkin.lua
+core\ScrollbarReskin.lua
+core\ItemButton.lua
+core\ItemGrid.lua
+core\Modules.lua
+
+# --- textures: art + atlas registration data (owner: Asset Pipeline Engineer) ---
+Textures\Assets.lua
+
+# --- integration: DragonUI handshake/options/module bridge (owner: Integration Liaison) ---
+integration\Register.lua
+integration\Options.lua
+
+# --- qa: in-game harness + manifest (owner: QA/Harness Engineer) ---
+qa\Harness.lua
+
+# === Sprint 1: Character panel (downport of NewEra/CharacterPanel) ===
+# Wave 1 — assets + shell/nav. Wave 2 files inserted at their load positions when dispatched.
+modules\character\Assets.lua
+modules\character\CharacterPanel.lua
+modules\character\InsetFrames.lua
+modules\character\ModelArea.lua
+modules\character\ModelControls.lua
+modules\character\SlotFrames.lua
+modules\character\SlotQuality.lua
+modules\character\InnerBorder.lua
+modules\character\LevelText.lua
+modules\character\PaperDoll.lua
+modules\character\Sidebar.lua
+modules\character\SidebarTabs.lua
+modules\character\TabButtons.lua
+modules\character\EquipmentSets.lua
+modules\character\EquipmentManagerPane.lua
+modules\character\EquipmentFlyout.lua
+modules\character\TitlesPane.lua
+modules\character\Reputation.lua
+modules\character\Skills.lua
+modules\character\Honor.lua
+modules\character\PetPaperDoll.lua
+modules\character\CloseButton.lua
+modules\character\EditModeRegister.lua
+
+# --- demo: Sprint-0 proof panel (owner: Core/Chrome Engineer) ---
+core\_HelloDemo.lua
