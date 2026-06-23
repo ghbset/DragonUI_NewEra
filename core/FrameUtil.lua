@@ -50,12 +50,32 @@ local function flushDeferredPins()
   end
 end
 
+-- TRUE physical screen height in PIXELS, the stock-3.3.5a way (see Blizzard UIParent.lua:1170):
+-- parse GetScreenResolutions()[GetCurrentResolution()] ("WxH"), with the gxResolution CVar as a
+-- fallback. We do NOT use GetPhysicalScreenSize() — that is a retail-only function; ClassicAPI's
+-- shim returns GetScreenWidth/Height, which are LOGICAL UIParent units (physicalH / UIParent scale),
+-- not physical pixels. Feeding logical units into the math below makes the integer multiplier wrong
+-- (e.g. m=2 instead of 1) whenever UIParent's effective scale ~= 1 → frames pinned 2x too large.
+local function physicalScreenHeight()
+  local h
+  if GetScreenResolutions and GetCurrentResolution then
+    local cur = (({ GetScreenResolutions() })[GetCurrentResolution()]) or ""
+    local _, hh = string.match(cur, "(%d+).-(%d+)")
+    h = tonumber(hh)
+  end
+  if (not h or h <= 0) and GetCVar then
+    local _, hh = string.match(GetCVar("gxResolution") or "", "(%d+).-(%d+)")
+    h = tonumber(hh)
+  end
+  return h
+end
+NE.FrameUtil.PhysicalScreenHeight = physicalScreenHeight
+
 -- The canonical pixel base: (768/physicalHeight) × the automatic integer multiplier — or NIL
 -- when the user ticked Blizzard's UI Scale (useUiScale CVar).
--- DOWNPORT: 3.3.5a has GetPhysicalScreenSize + GetCVarBool, so this ports unchanged.
 function NE.FrameUtil.PixelBaseScale()
   if GetCVarBool and GetCVarBool("useUiScale") then return nil end
-  local _, ph = GetPhysicalScreenSize()
+  local ph = physicalScreenHeight()
   if not ph or ph <= 0 then return nil end
   return (768 / ph) * math.max(1, math.floor(ph / 1080 + 0.5))
 end
@@ -78,7 +98,7 @@ function NE.FrameUtil.PinPixelPerfect(frame, userScale)
     frame:SetScale(userScale or 1.0)
     return
   end
-  local _, ph = GetPhysicalScreenSize()
+  local ph = physicalScreenHeight()
   if not ph or ph <= 0 then return end
   local m = math.max(1, math.floor(ph / 1080 + 0.5))
   local target = (768 / ph) * m * (userScale or 1.0)
