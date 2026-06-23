@@ -877,23 +877,67 @@ local function buildSearch()
   if SB.searchBox then return SB.searchBox end
   local h = host()
   if not h then return nil end
-  local sb = CreateFrame("EditBox", "NE_SpellBookSearchBox", h, "SearchBoxTemplate")
+  -- SELF-CONTAINED search box: a bare EditBox, NOT the shared "SearchBoxTemplate". Other addons
+  -- (e.g. ezCollections) ship their own Interface\SharedXML that redefines SearchBoxTemplate plus a
+  -- broken InputBoxInstructions_OnLoad; templates are global-by-name, so whichever loads last wins —
+  -- and CreateFrame would then run their faulty OnLoad and error. We build the border / magnifier /
+  -- placeholder ourselves so the search box is immune to any other addon's template redefinitions.
+  local sb = CreateFrame("EditBox", "NE_SpellBookSearchBox", h)
   sb:SetSize(200, 28)
   sb:SetPoint("TOPRIGHT", h, "TOPRIGHT", -42, -10)
   sb:SetAutoFocus(false)
-  sb:HookScript("OnTextChanged", function(self)
-    local raw = self:GetText() or ""
-    -- DOWNPORT/REPORT: the 3.3.5a SearchBoxTemplate reports its PLACEHOLDER ("Search") as the editbox
-    -- text when empty/unfocused, which filtered out every spell. Treat the bare placeholder as empty.
-    if raw == (_G.SEARCH or "Search") then raw = "" end
-    local q = raw:lower()
+  sb:SetFontObject(_G.ChatFontNormal or _G.GameFontHighlightSmall)   -- font OBJECT, not a string
+  sb:SetTextInsets(24, 8, 0, 0)   -- leave room for the magnifier icon at the left
+  sb:SetMaxLetters(40)
+  sb:SetScript("OnEscapePressed", function(self) self:ClearFocus() end)
+  sb:SetScript("OnEnterPressed",  function(self) self:ClearFocus() end)
+
+  -- Border — manual backdrop using guaranteed 3.3.5a art (SetBackdrop is guarded).
+  if sb.SetBackdrop then
+    sb:SetBackdrop({
+      bgFile   = "Interface\\Tooltips\\UI-Tooltip-Background",
+      edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+      tile = true, tileSize = 16, edgeSize = 12,
+      insets = { left = 4, right = 4, top = 4, bottom = 4 },
+    })
+    sb:SetBackdropColor(0, 0, 0, 0.6)
+    sb:SetBackdropBorderColor(0.6, 0.6, 0.6, 1)
+  end
+
+  -- Magnifier icon (guarded path: blank if the file is absent, never errors).
+  local icon = sb:CreateTexture(nil, "OVERLAY")
+  icon:SetSize(14, 14)
+  icon:SetPoint("LEFT", sb, "LEFT", 6, 0)
+  icon:SetTexture("Interface\\Common\\UI-Searchbox-Icon")
+  sb.searchIcon = icon
+
+  -- Placeholder ("Search") — a SEPARATE FontString shown only when empty+unfocused, so GetText() is
+  -- genuinely "" when empty (the old SearchBoxTemplate reported its placeholder AS the text).
+  local ph = sb:CreateFontString(nil, "ARTWORK", "GameFontDisableSmall")
+  ph:SetPoint("LEFT", sb, "LEFT", 24, 0)
+  ph:SetText(_G.SEARCH or "Search")
+  sb.placeholder = ph
+
+  local function applyFilter()
+    local q = (sb:GetText() or ""):lower()
     if q ~= SB.search then
       SB.search = q
       SB.page = 1
       buildElements()
       SB.RenderCards()
     end
+  end
+  sb:SetScript("OnTextChanged", function(self)
+    if sb.placeholder then
+      if (self:GetText() or "") == "" then sb.placeholder:Show() else sb.placeholder:Hide() end
+    end
+    applyFilter()
   end)
+  sb:SetScript("OnEditFocusGained", function() if sb.placeholder then sb.placeholder:Hide() end end)
+  sb:SetScript("OnEditFocusLost", function(self)
+    if sb.placeholder and (self:GetText() or "") == "" then sb.placeholder:Show() end
+  end)
+
   SB.searchBox = sb
   return sb
 end
