@@ -327,7 +327,7 @@ CP.IsSidebarExpanded  = function() return CP._sidebarExpanded and true or false 
 -- inset width + paperdoll visibility + sidebar state. key == "Character" shows the player paperdoll;
 -- Pet hides it (PetPaperDoll drives its OWN DragonUI_NewEra_PetModel, not CharacterModelFrame); the
 -- three Era tabs go full-width with no model/slots/decor and no sidebar.
-local WIDE_TAB_KEYS = { Skills = true, Honor = true, Reputation = true }
+local WIDE_TAB_KEYS = { Skills = true, Honor = true, Reputation = true, Currency = true }
 local function applyTabState(key)
   local f = CP.frame
   if not f then return end
@@ -529,6 +529,8 @@ local BLIZ_TAB_TO_NAME = {
   ReputationFrame   = "Reputation",
   SkillFrame        = "Skills",
   HonorFrame        = "Honor",
+  TokenFrame        = "Currency",
+  CurrencyFrame     = "Currency",
 }
 
 function CP.Toggle(show, whichTab)

@@ -4,13 +4,13 @@
 -- ARCHITECTURE PIVOT (CONTRACT_S1 §A0): we do NOT reskin Blizzard's CharacterFrameTab1..5. We build
 -- our OWN tab buttons hanging off the bottom of NE.charpanel.frame and switch our own content panes.
 --
--- GEOMETRY (VISUAL_SPEC.md): 5 metal DF tabs — Character / Pet / Skills / Honor / Reputation.
+-- GEOMETRY (VISUAL_SPEC.md): 6 metal DF tabs — Character / Pet / Skills / Honor / Reputation / Currency.
 --   * 36px tall INACTIVE, 42px tall ACTIVE.
 --   * 1px gap between tabs.
 --   * the ACTIVE tab is raised one frame level (so its taller body draws over its neighbours).
 --
 -- PANES: each tab owns an empty content frame parented to frame.Inset, named
---   DragonUI_NewEra_CharacterPane_<Tab>  (Tab in {Character,Pet,Skills,Honor,Reputation}).
+--   DragonUI_NewEra_CharacterPane_<Tab>  (Tab in {Character,Pet,Skills,Honor,Reputation,Currency}).
 -- Wave 2 fills them. The Character pane is the SLOTS+MODEL host (those widgets are reparented straight
 -- onto the Inset in CharacterPanel.lua, so the Character pane is a thin always-on container that
 -- never hides the model). Secondary panes cover the Inset and are hidden until selected.
@@ -34,7 +34,7 @@ local TAB_MIN_W      = 70
 
 local function log(msg) if CP._log then CP._log(msg) end end
 
--- Tab order + display labels (VISUAL_SPEC: Character,Pet,Skills,Honor,Reputation).
+-- Tab order + display labels (VISUAL_SPEC: Character,Pet,Skills,Honor,Reputation,Currency).
 -- DOWNPORT: use the localized globals where present, else English.
 local TABS = {
   { key = "Character",  label = _G.CHARACTER  or "Character"  },
@@ -42,6 +42,7 @@ local TABS = {
   { key = "Skills",     label = _G.SKILLS     or "Skills"     },
   { key = "Honor",      label = _G.HONOR      or "Honor"      },
   { key = "Reputation", label = _G.REPUTATION or "Reputation" },
+  { key = "Currency",   label = _G.CURRENCY   or "Currency"   },
 }
 
 CP._tabs       = CP._tabs       or {}   -- key -> button
@@ -272,6 +273,7 @@ selectTab = function(key)
       Skills     = "DragonUI_NewEra_SkillsScroll",
       Reputation = "DragonUI_NewEra_RepScroll",
       Honor      = "DragonUI_NewEra_HonorScroll",
+      Currency   = "DragonUI_NewEra_CurrencyScroll",
     }
     local sf = scrollNames[key] and _G[scrollNames[key]]
     if sf then
