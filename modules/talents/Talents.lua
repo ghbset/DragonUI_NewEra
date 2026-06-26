@@ -183,8 +183,7 @@ end
 -- selectable-glow atlas per shape. square/circle = "<stem>-greenglow"; the apex (capstone) glow is
 -- named "talents-node-apex-large-glow" (no -green prefix).
 local function glowAtlas(shape)
-  if shape == "capstone" then return "talents-node-apex-large-glow" end
-  return "talents-node-square-greenglow"   -- square + circle both use the square glow on 3.3.5a
+  return "talents-node-square-greenglow"   -- all shapes use the square glow on 3.3.5a (incl. capstone)
 end
 
 -- Hover-border alpha per state (full-bright on Normal/Selectable/Maxed; dim 0.4 otherwise).
