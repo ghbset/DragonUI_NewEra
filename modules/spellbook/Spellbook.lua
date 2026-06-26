@@ -27,7 +27,7 @@ local CARD_W, CARD_H   = 216.667, 60
 local CARD_XPAD        = 15
 local CARD_YPAD        = 10
 local GRID_COLS        = 3
-local ICON             = 36
+local ICON             = 33.6   -- 40 * 0.84 inset (matches the talents look): icon tucks fully under the frame border
 local ICON_BTN         = 40
 local VIEW_W, VIEW_H   = 680, 620
 local VIEW_TOP         = -122   -- shifted up 26 (with PAGES_TOP/BG_TOP) to close the old black band
@@ -226,8 +226,8 @@ local function createCard(i)
   b.Icon = b:CreateTexture(nil, "ARTWORK", nil, -1)
   b.Icon:SetSize(ICON, ICON)
   b.Icon:SetPoint("CENTER", b.IconSlot, "CENTER")
-  -- mask is (re)applied per-visual in applyCardVisual (square vs circle); default inset fallback.
-  b.Icon:SetTexCoord(0.06, 0.94, 0.06, 0.94)
+  -- full art (no crop); the 0.84 size inset lets the frame border cover the icon edge (talents look).
+  b.Icon:SetTexCoord(0, 1, 0, 1)
 
   b.Border = b:CreateTexture(nil, "OVERLAY", nil, 1)
   b.Border:SetAllPoints(b.IconSlot)
@@ -937,8 +937,8 @@ local function applyCardVisual(card, e)
     m:SetPoint("TOPLEFT", b.Icon, "TOPLEFT")
     m:SetPoint("BOTTOMRIGHT", b.Icon, "BOTTOMRIGHT")
   else
-    -- DEGRADE: no working mask → inset the icon under the frame.
-    b.Icon:SetTexCoord(0.06, 0.94, 0.06, 0.94)
+    -- DEGRADE: no working mask → rely on the 0.84 size inset (full art, frame covers the edge).
+    b.Icon:SetTexCoord(0, 1, 0, 1)
   end
 
   NE.tex.SetAtlas(b.IconHighlight, art.iconHighlight, false)

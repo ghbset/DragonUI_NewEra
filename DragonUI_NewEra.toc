@@ -84,5 +84,14 @@ modules\spellbook\Assets.lua
 modules\spellbook\Window.lua
 modules\spellbook\Spellbook.lua
 
+# --- Talents (standalone retail-style 3-tree panel over WotLK grid talents) ---
+# Load order: Assets (atlas rects) -> NodeData (shape layer) -> Talents (scaffold/chrome/pools)
+# -> Behavior (live data + preview/commit). RENDER-BEFORE-WIRE.
+modules\talents\Assets.lua
+modules\talents\NodeData.lua
+modules\talents\Talents.lua
+modules\talents\SpecTabs.lua
+modules\talents\Behavior.lua
+
 # --- demo: Sprint-0 proof panel (owner: Core/Chrome Engineer) ---
 core\_HelloDemo.lua
