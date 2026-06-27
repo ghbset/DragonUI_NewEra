@@ -651,8 +651,15 @@ local function interceptBlizzard()
   if type(ToggleTalentFrame) == "function" and not T._origToggle then
     T._origToggle = ToggleTalentFrame
     -- TAINT: ToggleTalentFrame is an INSECURE FrameXML toggle (PlayerTalentFrame is LoadOnDemand
-    -- on 3.3.5a — no conflict). Out-of-combat reroute; safe.
+    -- on 3.3.5a — no conflict). Out-of-combat reroute; safe. This covers the keybind (TOGGLETALENTS),
+    -- which looks up the global at press time.
     ToggleTalentFrame = function() T.Toggle() end
+  end
+  -- The micromenu's TalentMicroButton binds OnClick to the ORIGINAL ToggleTalentFrame *by reference*
+  -- in FrameXML (<OnClick function="ToggleTalentFrame"/>), so reassigning the global never reaches it.
+  -- Reroute the button's handler directly so it opens our window too.
+  if TalentMicroButton and TalentMicroButton.SetScript then
+    TalentMicroButton:SetScript("OnClick", function() T.Toggle() end)
   end
 end
 
