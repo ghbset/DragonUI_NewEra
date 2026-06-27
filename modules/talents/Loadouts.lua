@@ -63,6 +63,17 @@ local function buildStruct()
       local name, _, tier, column, _, maxRank = GetTalentInfo(tab, i, false, false, group)
       td.talents[i] = { tier = tier or 0, col = column or 0, maxRank = maxRank or 0, name = name or "" }
     end
+    -- Canonical (tier, column) order. The codec packs/unpacks talents in THIS order (not raw
+    -- GetTalentInfo index order) so a build string interoperates byte-for-byte with the standalone
+    -- HTML calculator, which derives the same order straight from the DBCs. order[k] = talent index.
+    td.order = {}
+    for i = 1, n do td.order[i] = i end
+    table.sort(td.order, function(a, b)
+      local ta, tb = td.talents[a], td.talents[b]
+      if ta.tier ~= tb.tier then return ta.tier < tb.tier end
+      if ta.col ~= tb.col then return ta.col < tb.col end
+      return a < b
+    end)
     s.tabs[tab] = td
   end
   return s
@@ -99,15 +110,30 @@ local function hashString(str)
   return string.format("%08x", h)
 end
 
+-- Base-agnostic + locale-free so the standalone HTML calculator (which reads the same data from the
+-- client DBCs) computes the IDENTICAL value: talents sorted by (tier, column); tier/column normalized
+-- by the per-tab minimum (so a 1-based API vs 0-based DBC can't drift); only shape (count + per-talent
+-- tier/col/maxRank) — no localized names. Format must match tools/talent-calc exactly.
 local function fingerprintOf(struct)
   if not struct then return nil end
   local parts = { struct.class }
   for tab = 1, #struct.tabs do
     local td = struct.tabs[tab]
-    parts[#parts + 1] = "T" .. tab .. "n" .. td.count
-    for i = 1, td.count do
-      local t = td.talents[i]
-      parts[#parts + 1] = t.tier .. "," .. t.col .. "," .. t.maxRank .. "," .. t.name
+    local list = {}
+    for i = 1, td.count do list[#list + 1] = td.talents[i] end
+    table.sort(list, function(a, b)
+      if a.tier ~= b.tier then return a.tier < b.tier end
+      return a.col < b.col
+    end)
+    local minT, minC
+    for _, t in ipairs(list) do
+      if not minT or t.tier < minT then minT = t.tier end
+      if not minC or t.col < minC then minC = t.col end
+    end
+    minT, minC = minT or 0, minC or 0
+    parts[#parts + 1] = "n" .. td.count
+    for _, t in ipairs(list) do
+      parts[#parts + 1] = (t.tier - minT) .. "," .. (t.col - minC) .. "," .. t.maxRank
     end
   end
   return hashString(table.concat(parts, "|"))
@@ -157,19 +183,27 @@ local function rtrim(s, c)
   return s:sub(1, l)
 end
 
--- Encode ranks (ranks[tab][idx]) -> a packed Talented code, using `map`.
+-- Per-tab canonical (tier,col) order: order[k] = talent index of the k-th wire slot.
+local function tabOrder(td) return td.order or nil end
+
+-- Encode ranks (ranks[tab][idx]) -> a packed Talented code. Talents are packed in (tier,col) order
+-- (td.order) so the wire layout matches the HTML calculator's DBC-derived order.
 local function encodePacked(ranks, struct, map)
   local ccode = classChar(map, struct.class)
   if not ccode then return nil end
   local zero = map:sub(1, 1)
   local code = ""
   for tab = 1, #struct.tabs do
-    local count = struct.tabs[tab].count
+    local td = struct.tabs[tab]
+    local count = td.count
+    local order = tabOrder(td)
     local r = ranks[tab] or {}
     local idx = 1
     while idx <= count do
-      local r1 = r[idx] or 0
-      local r2 = (idx + 1 <= count) and (r[idx + 1] or 0) or 0
+      local i1 = order and order[idx] or idx
+      local i2 = order and order[idx + 1] or (idx + 1)
+      local r1 = r[i1] or 0
+      local r2 = (idx + 1 <= count) and (r[i2] or 0) or 0
       local v = r1 * 6 + r2 + 1
       code = code .. map:sub(v, v)
       idx = idx + 2
@@ -180,35 +214,40 @@ local function encodePacked(ranks, struct, map)
   return ccode .. rtrim(code, STOP)
 end
 
--- Decode a packed Talented code -> ranks[tab][idx], class. Returns nil on a bad char.
+-- Decode a packed Talented code -> ranks[tab][idx], class. Wire slots are in (tier,col) order; we
+-- map them back to talent-index order via td.order. Returns nil on a bad char.
 local function decodePacked(code, struct, map)
   local class = classFromChar(map, code:sub(1, 1))
   if not class then return nil end
-  local ranks, tab = {}, 1
+  local wire, tab = {}, 1
   local count = struct.tabs[tab] and struct.tabs[tab].count or 0
-  ranks[tab] = {}
-  local t = ranks[tab]
+  wire[tab] = {}
+  local t = wire[tab]
   for i = 2, #code do
     local ch = code:sub(i, i)
     if ch == STOP then
-      if #t >= count then tab = tab + 1; ranks[tab] = {}; t = ranks[tab]; count = struct.tabs[tab] and struct.tabs[tab].count or 0 end
-      tab = tab + 1; ranks[tab] = {}; t = ranks[tab]; count = struct.tabs[tab] and struct.tabs[tab].count or 0
+      if #t >= count then tab = tab + 1; wire[tab] = {}; t = wire[tab]; count = struct.tabs[tab] and struct.tabs[tab].count or 0 end
+      tab = tab + 1; wire[tab] = {}; t = wire[tab]; count = struct.tabs[tab] and struct.tabs[tab].count or 0
     else
       local v = map:find(ch, nil, true)
       if not v then return nil end
       v = v - 1
       local b = v % 6
       local a = (v - b) / 6
-      if #t >= count then tab = tab + 1; ranks[tab] = {}; t = ranks[tab]; count = struct.tabs[tab] and struct.tabs[tab].count or 0 end
+      if #t >= count then tab = tab + 1; wire[tab] = {}; t = wire[tab]; count = struct.tabs[tab] and struct.tabs[tab].count or 0 end
       t[#t + 1] = a
       if #t < count then t[#t + 1] = b end
     end
   end
-  -- zero-fill every tab to its full count
+  -- remap wire (tier,col order) -> ranks (talent-index order), zero-filled
+  local ranks = {}
   for tb = 1, #struct.tabs do
-    local r = ranks[tb] or {}
+    local td = struct.tabs[tb]
+    local order = tabOrder(td)
+    local w = wire[tb] or {}
+    local r = {}
+    for k = 1, td.count do r[order and order[k] or k] = w[k] or 0 end
     ranks[tb] = r
-    for i = 1, struct.tabs[tb].count do r[i] = r[i] or 0 end
   end
   return ranks, class
 end

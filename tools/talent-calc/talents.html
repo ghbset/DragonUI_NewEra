@@ -1,0 +1,1043 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DragonUI — Talent Calculator</title>
+<style>
+  :root{
+    --bg:#14110c; --panel:#1f1a12; --edge:#3a2f1d; --gold:#e6c66b; --text:#e8ddc4;
+    --dim:#8a7c5e; --green:#5fbf5f; --yellow:#e6c34d; --lock:#473c28; --avail:#caa64a;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);font:13px/1.4 "Segoe UI",system-ui,Arial,sans-serif}
+  header{padding:14px 18px;border-bottom:1px solid var(--edge);background:linear-gradient(#241d12,#1a150d)}
+  header h1{margin:0;font-size:18px;color:var(--gold);font-weight:600}
+  header p{margin:4px 0 0;color:var(--dim)}
+  .wrap{max-width:1180px;margin:0 auto;padding:16px 18px}
+  .row{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+  .controls{margin-bottom:14px}
+  button,select,input[type=text]{background:var(--panel);color:var(--text);border:1px solid var(--edge);
+    border-radius:5px;padding:6px 10px;font-size:13px}
+  button{cursor:pointer}
+  button:hover:not(:disabled){border-color:var(--gold)}
+  button:disabled{opacity:.45;cursor:default}
+  label.file{display:inline-flex;align-items:center;gap:8px;background:var(--panel);border:1px solid var(--edge);
+    border-radius:5px;padding:6px 12px;cursor:pointer;color:var(--gold)}
+  label.file:hover{border-color:var(--gold)}
+  label.file input{display:none}
+  #status{color:var(--dim)}
+  #status.err{color:#e07a7a}
+  #classBar{display:flex;gap:6px;flex-wrap:wrap;margin:10px 0}
+  #classBar button.active{border-color:var(--gold);color:var(--gold);background:#2a2114}
+  .totals{font-size:14px;margin:6px 0 14px}
+  .totals b{color:var(--gold)}
+  .trees{display:flex;gap:18px;align-items:flex-start;flex-wrap:wrap}
+  .tree{background:var(--panel);border:1px solid var(--edge);border-radius:8px;padding:10px 12px 14px}
+  .tree h3{margin:0 0 2px;font-size:14px;color:var(--gold);display:flex;justify-content:space-between;gap:14px}
+  .tree h3 .pts{color:var(--text)}
+  .grid{position:relative;margin-top:8px}
+  .talent{position:absolute;width:46px;height:46px;border:2px solid var(--lock);border-radius:6px;
+    background:#0e0b07 center/100% 100% no-repeat;cursor:pointer;user-select:none;
+    transition:border-color .08s,box-shadow .08s}
+  .talent .rank{position:absolute;right:-3px;bottom:-5px;font-size:11px;font-weight:700;line-height:15px;
+    background:rgba(0,0,0,.82);border-radius:4px;padding:0 3px;color:#fff}
+  .talent.s-avail{border-color:var(--avail)}
+  .talent.s-partial{border-color:var(--yellow);box-shadow:0 0 6px #6b561f}
+  .talent.s-max{border-color:var(--green);box-shadow:0 0 7px #2f5f2f}
+  .talent.s-locked{opacity:.45;cursor:not-allowed}
+  .talent.s-max .rank{color:var(--green)}
+  .talent.s-partial .rank{color:var(--yellow)}
+  .io{margin-top:18px;display:grid;grid-template-columns:1fr;gap:10px;max-width:760px}
+  .io .line{display:flex;gap:8px;align-items:center}
+  .io label{width:70px;color:var(--dim)}
+  .io input[type=text]{flex:1;font-family:ui-monospace,Consolas,monospace;font-size:12px}
+  .main{display:flex;gap:16px;align-items:flex-start}
+  #hover{flex:0 0 280px;min-height:170px;padding:10px 12px;color:var(--dim);background:#100d08;border:1px solid var(--edge);border-radius:8px;position:sticky;top:10px;align-self:flex-start;line-height:1.55}
+  .trees{flex:1;min-width:0}
+  #hover b{color:var(--text)}
+  .pill{display:inline-block;background:#2a2114;border:1px solid var(--edge);border-radius:10px;padding:1px 8px;color:var(--gold)}
+  a{color:var(--gold)}
+</style>
+</head>
+<body>
+<header>
+  <h1>DragonUI — Talent Calculator</h1>
+  <p>Reads talents straight from your WoW <code>Data</code> folder — including your server's custom trees — and exports a build string the in-game addon imports.</p>
+</header>
+
+<div class="wrap">
+  <div class="row controls">
+    <label class="file">Select your WoW <b>Data</b> folder
+      <input type="file" id="picker" webkitdirectory directory multiple>
+    </label>
+    <span id="status">No data loaded.</span>
+  </div>
+
+  <div class="row" id="metaRow" style="display:none">
+    <label>Realm label (optional, cosmetic): </label>
+    <input type="text" id="realm" placeholder="auto" style="width:160px">
+    <span class="pill" id="fpPill"></span>
+  </div>
+
+  <pre id="diag" style="display:none;background:#100d08;border:1px solid var(--edge);border-radius:6px;padding:8px 10px;color:var(--dim);font-size:11px;white-space:pre-wrap;margin:0 0 12px;max-width:1000px"></pre>
+  <div id="classBar"></div>
+  <div class="totals" id="totals" style="display:none"></div>
+  <div class="main">
+    <div id="hover">Hover a talent for its description.</div>
+    <div class="trees" id="trees"></div>
+  </div>
+
+  <div class="io" id="io" style="display:none">
+    <div class="line"><label>Export</label><input type="text" id="exportBox" readonly onclick="this.select()"></div>
+    <div class="line"><label>Import</label><input type="text" id="importBox" placeholder="paste a build string or calculator URL">
+      <button id="importBtn">Load</button></div>
+  </div>
+</div>
+
+<script>
+/* ===== inlined: mpq.js ===== */
+// mpq.js — minimal MPQ archive reader (WoW 3.3.5a, format v0/v1), browser + Node.
+//
+// Reads on demand via an async byte reader { size, read(offset, len) -> Promise<ArrayBuffer> } so a
+// 4 GB archive never has to be loaded whole (browser: File.slice().arrayBuffer(); Node: fd read).
+// Supports the file flags WoW DBCs actually use: compressed (multi-sector zlib) / stored /
+// single-unit / encrypted. PKWARE-implode and bzip2 sectors throw (DBCs don't use them).
+(function (root, factory) {
+  var api = factory();
+  if (root) root.MPQ = api;                                                 // browser global (window.MPQ)
+  if (typeof module === "object" && module.exports) module.exports = api;   // Node
+})(typeof globalThis !== "undefined" ? globalThis : (typeof self !== "undefined" ? self : this), function () {
+  "use strict";
+
+  // ---- MPQ crypt table + hashing (StormLib algorithm) --------------------------------------------
+  var cryptTable = new Uint32Array(0x500);
+  (function () {
+    var seed = 0x00100001;
+    for (var i1 = 0; i1 < 0x100; i1++) {
+      for (var i2 = i1, n = 0; n < 5; n++, i2 += 0x100) {
+        seed = (seed * 125 + 3) % 0x2aaaab;
+        var t1 = seed & 0xffff;
+        seed = (seed * 125 + 3) % 0x2aaaab;
+        var t2 = seed & 0xffff;
+        cryptTable[i2] = ((t1 << 16) | t2) >>> 0;
+      }
+    }
+  })();
+
+  function hashString(str, type) {
+    var s1 = 0x7fed7fed, s2 = 0xeeeeeeee >>> 0;
+    str = str.toUpperCase().replace(/\//g, "\\");
+    for (var i = 0; i < str.length; i++) {
+      var ch = str.charCodeAt(i) & 0xff;
+      s1 = (cryptTable[((type << 8) + ch) >>> 0] ^ ((s1 + s2) >>> 0)) >>> 0;
+      s2 = (ch + s1 + s2 + ((s2 << 5) >>> 0) + 3) >>> 0;
+    }
+    return s1 >>> 0;
+  }
+
+  function decryptU32(arr, key) {
+    var s1 = key >>> 0, s2 = 0xeeeeeeee >>> 0;
+    for (var i = 0; i < arr.length; i++) {
+      s2 = (s2 + cryptTable[0x400 + (s1 & 0xff)]) >>> 0;
+      var ch = (arr[i] ^ ((s1 + s2) >>> 0)) >>> 0;
+      s1 = (((((~s1 << 0x15) >>> 0) + 0x11111111) >>> 0) | (s1 >>> 0x0b)) >>> 0;
+      s2 = (ch + s2 + ((s2 << 5) >>> 0) + 3) >>> 0;
+      arr[i] = ch >>> 0;
+    }
+  }
+
+  // ---- zlib inflate via the Web Streams DecompressionStream (Node 20 + browsers) ------------------
+  async function inflate(u8) {
+    var ds = new DecompressionStream("deflate");
+    var w = ds.writable.getWriter();
+    w.write(u8); w.close();
+    var r = ds.readable.getReader(), chunks = [], len = 0, c;
+    for (;;) { c = await r.read(); if (c.done) break; chunks.push(c.value); len += c.value.length; }
+    var out = new Uint8Array(len), o = 0;
+    for (var i = 0; i < chunks.length; i++) { out.set(chunks[i], o); o += chunks[i].length; }
+    return out;
+  }
+
+  var FLAG = { IMPLODE: 0x100, COMPRESS: 0x200, ENCRYPTED: 0x10000, FIX_KEY: 0x20000, SINGLE: 0x1000000, EXISTS: 0x80000000 };
+
+  function MPQArchive() {}
+
+  // reader: { size:Number, read(offset,len)->Promise<ArrayBuffer> }
+  MPQArchive.open = async function (reader) {
+    var a = new MPQArchive();
+    a.reader = reader;
+    // Find the 'MPQ\x1a' header (0, 0x200, 0x400, ...).
+    var off = -1;
+    for (var probe = 0; probe < Math.min(reader.size, 0x40000); probe += 0x200) {
+      var hb = new DataView(await reader.read(probe, 4));
+      if (hb.getUint32(0, true) === 0x1a51504d) { off = probe; break; }
+    }
+    if (off < 0) throw new Error("not an MPQ archive");
+    a.archiveOffset = off;
+    var h = new DataView(await reader.read(off, 32));
+    a.sectorSize = 512 << h.getUint16(14, true);
+    var hashPos = h.getUint32(16, true), blockPos = h.getUint32(20, true);
+    a.hashCount = h.getUint32(24, true);
+    a.blockCount = h.getUint32(28, true);
+
+    a.hash = await readTable(reader, off + hashPos, a.hashCount, hashString("(hash table)", 3));
+    a.block = await readTable(reader, off + blockPos, a.blockCount, hashString("(block table)", 3));
+    return a;
+  };
+
+  async function readTable(reader, pos, count, key) {
+    var raw = new Uint32Array(await reader.read(pos, count * 16));
+    decryptU32(raw, key);
+    return raw; // each entry = 4 u32
+  }
+
+  MPQArchive.prototype.findFile = function (name) {
+    var n = this.hashCount;
+    var start = hashString(name, 0) % n;
+    var a = hashString(name, 1), b = hashString(name, 2);
+    for (var i = 0; i < n; i++) {
+      var e = (start + i) % n, base = e * 4;
+      var blockIndex = this.hash[base + 3] >>> 0;
+      if (blockIndex === 0xffffffff) return null; // empty terminator
+      if (blockIndex !== 0xfffffffe && this.hash[base] === a && this.hash[base + 1] === b) {
+        var bb = blockIndex * 4;
+        return {
+          filePos: this.block[bb] >>> 0, cSize: this.block[bb + 1] >>> 0,
+          fSize: this.block[bb + 2] >>> 0, flags: this.block[bb + 3] >>> 0, name: name,
+        };
+      }
+    }
+    return null;
+  };
+
+  MPQArchive.prototype.hasFile = function (name) { return !!this.findFile(name); };
+
+  MPQArchive.prototype.readFile = async function (name) {
+    var e = this.findFile(name);
+    if (!e) return null;
+    if (!(e.flags & FLAG.EXISTS)) return null;
+    var fileKey = 0, encrypted = !!(e.flags & FLAG.ENCRYPTED);
+    if (encrypted) {
+      var bn = name.replace(/^.*[\\/]/, "");
+      fileKey = hashString(bn, 3) >>> 0;
+      if (e.flags & FLAG.FIX_KEY) fileKey = (((fileKey + e.filePos) >>> 0) ^ e.fSize) >>> 0;
+    }
+    var abs = this.archiveOffset + e.filePos;
+
+    if (e.flags & FLAG.SINGLE) {
+      var raw = new Uint8Array(await this.reader.read(abs, e.cSize));
+      if (encrypted) { var u = new Uint32Array(raw.buffer.slice(0, raw.length & ~3)); decryptU32(u, fileKey); raw = new Uint8Array(u.buffer); }
+      return decompressSector(raw, e.fSize, e.flags);
+    }
+
+    // Stored (no COMPRESS/IMPLODE flag): there is NO sector offset table — the data is just the raw
+    // fSize bytes (in sectorSize chunks). Many patch tools store DBCs uncompressed; Blizzard's are
+    // zlib-compressed (which has the offset table). Read it directly.
+    if (!(e.flags & (FLAG.COMPRESS | FLAG.IMPLODE))) {
+      var stored = new Uint8Array(await this.reader.read(abs, e.fSize));
+      if (encrypted) {
+        var ss = this.sectorSize;
+        for (var so0 = 0, sec = 0; so0 < stored.length; so0 += ss, sec++) {
+          var nb = Math.min(ss, stored.length - so0) & ~3;
+          if (nb) { var su0 = new Uint32Array(stored.buffer.slice(so0, so0 + nb)); decryptU32(su0, (fileKey + sec) >>> 0); stored.set(new Uint8Array(su0.buffer), so0); }
+        }
+      }
+      return stored;
+    }
+
+    var numSectors = Math.ceil(e.fSize / this.sectorSize);
+    var offU = new Uint32Array(await this.reader.read(abs, (numSectors + 1) * 4));
+    if (encrypted) decryptU32(offU, (fileKey - 1) >>> 0);
+    var out = new Uint8Array(e.fSize), written = 0;
+    for (var i = 0; i < numSectors; i++) {
+      var so = offU[i], eo = offU[i + 1];
+      var sraw = new Uint8Array(await this.reader.read(abs + so, eo - so));
+      if (encrypted) { var su = new Uint32Array(sraw.buffer.slice(0, sraw.length & ~3)); decryptU32(su, (fileKey + i) >>> 0); var merged = new Uint8Array(sraw.length); merged.set(new Uint8Array(su.buffer)); for (var k = su.length * 4; k < sraw.length; k++) merged[k] = sraw[k]; sraw = merged; }
+      var expected = Math.min(this.sectorSize, e.fSize - written);
+      var dec = await decompressSector(sraw, expected, e.flags);
+      out.set(dec.subarray(0, expected), written);
+      written += expected;
+    }
+    return out;
+  };
+
+  async function decompressSector(raw, expected, flags) {
+    if (raw.length >= expected) return raw.subarray(0, expected); // stored (not compressed)
+    if (flags & FLAG.COMPRESS) {
+      var mask = raw[0], body = raw.subarray(1);
+      if (mask & 0x02) return await inflate(body);   // zlib
+      if (mask === 0x00) return body;                // stored with leading 0 byte
+      throw new Error("unsupported MPQ compression 0x" + mask.toString(16));
+    }
+    if (flags & FLAG.IMPLODE) throw new Error("PKWARE-implode sectors not supported");
+    return raw.subarray(0, expected);
+  }
+
+  MPQArchive.hashString = hashString;
+  return MPQArchive;
+});
+
+</script>
+<script>
+/* ===== inlined: dbc.js ===== */
+// dbc.js — WoW 3.3.5a DBC parsing + talent-tree assembly + fingerprint + Talented-format codec.
+// Browser + Node. The fingerprint + codec MUST stay byte-identical to the addon
+// (modules/talents/Loadouts.lua) so builds round-trip between this calculator and the in-game addon.
+(function (root, factory) {
+  var api = factory();
+  if (root) root.DBC = api;                                                 // browser global (window.DBC)
+  if (typeof module === "object" && module.exports) module.exports = api;   // Node
+})(typeof globalThis !== "undefined" ? globalThis : (typeof self !== "undefined" ? self : this), function () {
+  "use strict";
+
+  // ---- generic DBC (WDBC) reader -----------------------------------------------------------------
+  function parse(bytes) {
+    var dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    if (dv.getUint32(0, true) !== 0x43424457) throw new Error("not a WDBC file");
+    var recordCount = dv.getUint32(4, true);
+    var fieldCount = dv.getUint32(8, true);
+    var recordSize = dv.getUint32(12, true);
+    var stringSize = dv.getUint32(16, true);
+    var recBase = 20;
+    var strBase = 20 + recordCount * recordSize;
+    function u32(rec, field) { return dv.getUint32(recBase + rec * recordSize + field * 4, true); }
+    function f32(rec, field) { return dv.getFloat32(recBase + rec * recordSize + field * 4, true); }
+    function str(off) {
+      if (!off || off >= stringSize) return "";
+      var s = "", b, p = strBase + off;
+      while ((b = dv.getUint8(p++)) !== 0) s += String.fromCharCode(b);
+      return s;
+    }
+    return { recordCount: recordCount, fieldCount: fieldCount, u32: u32, f32: f32, str: str };
+  }
+
+  var CLASS_BIT = {
+    0x1: "WARRIOR", 0x2: "PALADIN", 0x4: "HUNTER", 0x8: "ROGUE", 0x10: "PRIEST",
+    0x20: "DEATHKNIGHT", 0x40: "SHAMAN", 0x80: "MAGE", 0x100: "WARLOCK", 0x400: "DRUID",
+  };
+  var SPELL_NAME_FIELD = 136; // enUS SpellName_Lang in 3.3.5a Spell.dbc
+  var SPELL_ICON_FIELD = 133; // SpellIconID
+  var SPELL_DESC_FIELD = 170; // enUS SpellDescription_Lang
+  var SPELL_DURIDX_FIELD = 40; // DurationIndex -> SpellDuration.dbc
+  var EFF_BASEPOINTS = [80, 81, 82];  // EffectBasePoints[1..3]
+
+  function secs(ms) {
+    if (!ms || ms <= 0) return "0 sec";
+    var s = ms / 1000;
+    if (s >= 60 && s % 60 === 0) return (s / 60) + " min";
+    return (Number.isInteger(s) ? s : Math.round(s * 10) / 10) + " sec";
+  }
+
+  // Comprehensive WoW tooltip placeholder substitution. `ctx` exposes per-spell lookups (closed over
+  // all of Spell.dbc + SpellDuration in buildTrees): ctx.val(id,eff), ctx.durMs(id), ctx.ampMs(id,eff),
+  // ctx.proc(id), ctx.stack(id), ctx.charges(id), ctx.chain(id). `selfId` = the spell being described.
+  //   $sN/$SN/$mN/$MN  effect value      $/D;sN  divided        $<id>sN/$<id>mN  referenced effect value
+  //   $d/$D/$<id>d      duration          $tN/$TN/$<id>tN  periodic time       $h/$<id>h  proc chance
+  //   $uN/$u/$<id>u     stack count       $n/$<id>n  charges    $xN/$i/$<id>i    chain/target count
+  //   ${ ... }          math expression   $g a:b;  gender       $l a:b;  plural   $b  line break
+  // Anything left (radius $a, $<named> variables, and math using live stats like $AP/$SPH) is rendered
+  // readably — those need live character data that doesn't exist offline.
+  function substituteDesc(desc, selfId, ctx) {
+    if (!desc) return "";
+    function self(){ return selfId; }
+    function num(v){ return (typeof v === "number" && isFinite(v)) ? v : 0; }
+
+    // resolve a single scalar token (without the leading $), e.g. "s1", "12345d", "m2", "tN", "h"
+    function scalar(tok) {
+      var m;
+      if ((m = tok.match(/^(\d+)?([smSM])(\d)$/)))   return String(num(ctx.val(m[1] ? +m[1] : self(), +m[3])));
+      if ((m = tok.match(/^(\d+)?[dD]$/)))            return secs(ctx.durMs(m[1] ? +m[1] : self()));
+      if ((m = tok.match(/^(\d+)?[tT](\d)$/)))        return secs(ctx.ampMs(m[1] ? +m[1] : self(), +m[2]));
+      if ((m = tok.match(/^(\d+)?[aA](\d)?$/)))        return String(Math.round(num(ctx.radius(m[1] ? +m[1] : self(), +m[2] || 1))));
+      if ((m = tok.match(/^(\d+)?[oO](\d)$/)))        return String(num(ctx.val(m[1] ? +m[1] : self(), +m[2])));
+      if ((m = tok.match(/^(\d+)?h$/)))               return String(num(ctx.proc(m[1] ? +m[1] : self())));
+      if ((m = tok.match(/^(\d+)?[un]$/)))            return String(num(ctx.stack(m[1] ? +m[1] : self())) || num(ctx.charges(m[1] ? +m[1] : self())));
+      if ((m = tok.match(/^(\d+)?[ixX]\d?$/)))        return String(num(ctx.chain(m[1] ? +m[1] : self())));
+      return null;
+    }
+
+    var out = desc;
+    // 0) conditionals  $?cond[a][b] -> the first (true) branch (the common case in talent text)
+    out = out.replace(/\$\?[^\[]*\[([^\]]*)\]\[([^\]]*)\]/g, "$1")
+             .replace(/\$\?[^\[]*\[([^\]]*)\]/g, "$1");
+    // Render an expression that still has live-stat vars: split into +/- terms; evaluate the numeric
+    // ones (157*5 -> 785) and turn "coef * $STAT" into "X% of <stat>" (e.g. $RAP*0.1 -> 10% of ranged
+    // attack power). Result reads like "785 plus 10% of ranged attack power".
+    function evalNum(str) { try { var v = Function('"use strict";return (' + str + ')')(); return isFinite(v) ? v : null; } catch (x) { return null; } }
+    function renderMath(e) {
+      var terms = e.match(/[+\-]?[^+\-]+/g) || [e], parts = [];
+      for (var k = 0; k < terms.length; k++) {
+        var raw = terms[k].trim(), sign = "";
+        if (raw[0] === "+" || raw[0] === "-") { sign = raw[0]; raw = raw.slice(1).trim(); }
+        if (!raw) continue;
+        var sm = raw.match(/\$<?([A-Za-z]\w*)>?/), piece;
+        if (!sm) {
+          var v = /^[\d.+\-*/() ]+$/.test(raw) ? evalNum(raw) : null;
+          piece = (v === null) ? raw : String(Math.round(v));
+        } else {
+          var word = STAT_WORDS[sm[1].toLowerCase()] || sm[1];
+          var coefExpr = raw.replace(/\$<?[A-Za-z]\w*>?/, "1");
+          var coef = /^[\d.+\-*/() ]+$/.test(coefExpr) ? evalNum(coefExpr) : null;
+          piece = (coef === null) ? raw.replace(/\$<?([A-Za-z]\w*)>?/g, function (_2, w) { return STAT_WORDS[w.toLowerCase()] || w; })
+                : (coef === 1 ? "your " + word : (Math.round(coef * 1000) / 10) + "% of " + word);
+        }
+        parts.push(parts.length === 0 ? (sign === "-" ? "-" : "") + piece : (sign === "-" ? "minus " : "plus ") + piece);
+      }
+      return parts.join(" ");
+    }
+
+    // 1) math expressions ${ ... }
+    out = out.replace(/\$\{([^}]*)\}/g, function (_, expr) {
+      var e = expr
+        .replace(/\$(\d+)?([smSM])(\d)/g, function (_2, id, c, n) { return String(num(ctx.val(id ? +id : self(), +n))); })
+        .replace(/\$(\d+)?[dD]/g, function (_2, id) { return String(ctx.durMs(id ? +id : self()) / 1000); })
+        .replace(/\$h/g, function () { return String(num(ctx.proc(self()))); })
+        .replace(/\$[ix]\d?/g, function () { return String(num(ctx.chain(self()))); });
+      if (/^[-+*/().\d\s]+$/.test(e)) {                 // pure arithmetic -> evaluate
+        var r = evalNum(e); if (r !== null) return String(Math.round(r * 100) / 100);
+      }
+      return renderMath(e);                             // mixed numeric + live stats
+    });
+    // 2) divided / multiplied value  $/D;[<id>]sN  or  $*D;[<id>]sN  (s or o effect)
+    out = out.replace(/\$([/*])(\d+);(\d+)?([sSoO])(\d)/g, function (_, op, D, id, c, n) {
+      var v = num(ctx.val(id ? +id : self(), +n));
+      return String(Math.round(op === "/" ? v / +D : v * +D));
+    });
+    // 3) gender / plural / line break
+    out = out.replace(/\$[gG]\s*([^:;]*):([^;]*);?/g, "$1")
+             .replace(/\$[lL]\s*([^:;]*):([^;]*);?/g, "$2")
+             .replace(/\$b/gi, " ");
+    // 4) scalar tokens $<...>  (longest match first: optional spellid, letter, optional digit)
+    out = out.replace(/\$(\d+)?([a-zA-Z])(\d)?/g, function (whole, id, c, n) {
+      var r = scalar((id || "") + c + (n || ""));
+      return r === null ? whole : r;
+    });
+    // 5) named variables $<name> and any leftover $codes -> readable / stripped
+    out = out.replace(/\$<([^>]*)>/g, function (_, w) { return STAT_WORDS[w.toLowerCase()] || w; })
+             .replace(/\$\{[^}]*\}/g, "").replace(/\$\w+/g, "");
+    return out.replace(/\s{2,}/g, " ").trim();
+  }
+  // Live-character stat variables that can't be computed offline — render as words.
+  var STAT_WORDS = { ap: "attack power", rap: "ranged attack power", sph: "spell power", spd: "spell power",
+    mw: "min weapon damage", mwb: "max weapon damage", pl: "level", bonus: "bonus", heal: "healing",
+    mana: "mana", percent: "%", threat: "threat", mult: "multiplier" };
+
+  // Assemble per-class trees from the four DBCs (Uint8Array each). spellDbc/spellIconDbc optional
+  // (names/icons); without them talents fall back to "#<id>" and no icon.
+  function buildTrees(talentBytes, talentTabBytes, spellBytes, spellIconBytes, spellDurationBytes, spellRadiusBytes) {
+    var TT = parse(talentTabBytes);
+    var tabs = {};
+    for (var i = 0; i < TT.recordCount; i++) {
+      tabs[TT.u32(i, 0)] = { cls: CLASS_BIT[TT.u32(i, 20)] || null, order: TT.u32(i, 22), name: TT.str(TT.u32(i, 1)) };
+    }
+
+    var T = parse(talentBytes);
+    var talents = [], needSpells = {};
+    for (var r = 0; r < T.recordCount; r++) {
+      var ranks = [];
+      for (var k = 0; k < 9; k++) ranks.push(T.u32(r, 4 + k));
+      var maxRank = 0; for (var z = 0; z < 9; z++) if (ranks[z]) maxRank++;
+      var prereq = [T.u32(r, 13), T.u32(r, 14), T.u32(r, 15)];
+      var prereqRank = [T.u32(r, 16), T.u32(r, 17), T.u32(r, 18)];
+      var t = {
+        id: T.u32(r, 0), tab: T.u32(r, 1), tier: T.u32(r, 2), col: T.u32(r, 3),
+        maxRank: maxRank, ranks: ranks, prereq: prereq, prereqRank: prereqRank,
+        name: "#" + T.u32(r, 0), icon: null,
+      };
+      talents.push(t);
+      for (var nk = 0; nk < 9; nk++) if (ranks[nk]) needSpells[ranks[nk]] = 1;   // every rank's spell
+    }
+
+    // name/icon/desc for talent rank spells, plus the per-spell numbers placeholders may reference
+    // (for ALL spells, since $<id>... can point anywhere). sd[id] = { bp, di, amp, proc, charges, stack, chain }.
+    var iconIds = {};
+    if (spellBytes) {
+      var S = parse(spellBytes), info = {}, sd = {};
+      for (var s = 0; s < S.recordCount; s++) {
+        var id = S.u32(s, 0);
+        sd[id] = {
+          bp: [S.u32(s, 80) | 0, S.u32(s, 81) | 0, S.u32(s, 82) | 0],
+          di: S.u32(s, SPELL_DURIDX_FIELD),
+          amp: [S.u32(s, 98), S.u32(s, 99), S.u32(s, 100)],
+          rad: [S.u32(s, 92), S.u32(s, 93), S.u32(s, 94)],
+          proc: S.u32(s, 35), charges: S.u32(s, 36), stack: S.u32(s, 49), chain: S.u32(s, 104),
+        };
+        if (needSpells[id]) info[id] = { name: S.str(S.u32(s, SPELL_NAME_FIELD)), icon: S.u32(s, SPELL_ICON_FIELD), desc: S.str(S.u32(s, SPELL_DESC_FIELD)) };
+      }
+      var durByIndex = {};
+      if (spellDurationBytes) { var SD = parse(spellDurationBytes); for (var d = 0; d < SD.recordCount; d++) durByIndex[SD.u32(d, 0)] = SD.u32(d, 1); }
+      var radByIndex = {};
+      if (spellRadiusBytes) { var SR = parse(spellRadiusBytes); for (var rr = 0; rr < SR.recordCount; rr++) radByIndex[SR.u32(rr, 0)] = SR.f32(rr, 1); }
+      function g(id) { return sd[id] || { bp: [0, 0, 0], di: 0, amp: [0, 0, 0], rad: [0, 0, 0], proc: 0, charges: 0, stack: 0, chain: 0 }; }
+      var ctx = {
+        val: function (id, eff) { return Math.abs((g(id).bp[eff - 1] || 0) + 1); },
+        durMs: function (id) { return durByIndex[g(id).di] || 0; },
+        ampMs: function (id, eff) { return g(id).amp[eff - 1] || 0; },
+        radius: function (id, eff) { var r = g(id).rad; return radByIndex[r[(eff || 1) - 1]] || radByIndex[r[0]] || 0; },
+        proc: function (id) { return g(id).proc || 0; },
+        stack: function (id) { return g(id).stack || 0; },
+        charges: function (id) { return g(id).charges || 0; },
+        chain: function (id) { return g(id).chain || 0; },
+      };
+      for (var ti = 0; ti < talents.length; ti++) {
+        var rks = talents[ti].ranks, r1 = info[rks[0]];
+        if (r1) { talents[ti].name = r1.name; if (r1.icon) { talents[ti].iconId = r1.icon; iconIds[r1.icon] = 1; } }
+        var tips = [];
+        for (var rk = 0; rk < 9; rk++) { var sid = rks[rk]; if (!sid) break; var si = info[sid]; tips.push(si ? substituteDesc(si.desc, sid, ctx) : ""); }
+        talents[ti].tooltips = tips;
+      }
+    }
+    // icon texture paths from SpellIcon.dbc
+    if (spellIconBytes) {
+      var SI = parse(spellIconBytes), pathById = {};
+      for (var ic = 0; ic < SI.recordCount; ic++) pathById[SI.u32(ic, 0)] = SI.str(SI.u32(ic, 1));
+      for (var tj = 0; tj < talents.length; tj++) if (talents[tj].iconId) talents[tj].icon = pathById[talents[tj].iconId] || null;
+    }
+
+    // group by class -> ordered tabs -> talents
+    var byClass = {};
+    for (var p = 0; p < talents.length; p++) {
+      var tb = tabs[talents[p].tab];
+      if (!tb || !tb.cls) continue;
+      (byClass[tb.cls] = byClass[tb.cls] || {});
+      (byClass[tb.cls][talents[p].tab] = byClass[tb.cls][talents[p].tab] || []).push(talents[p]);
+    }
+    var classes = {};
+    Object.keys(byClass).forEach(function (cls) {
+      var tabIds = Object.keys(byClass[cls]).map(Number).sort(function (a, b) { return tabs[a].order - tabs[b].order; });
+      var outTabs = tabIds.map(function (id) {
+        var list = byClass[cls][id].slice().sort(byTierCol);
+        return { id: id, name: tabs[id].name, talents: list };
+      });
+      classes[cls] = { tabs: outTabs };
+      classes[cls].fingerprint = fingerprint(cls, outTabs);
+    });
+    return classes;
+  }
+
+  function byTierCol(a, b) { return a.tier !== b.tier ? a.tier - b.tier : a.col - b.col; }
+
+  // ---- fingerprint (must match Loadouts.lua fingerprintOf) ---------------------------------------
+  function djb2(str) {
+    var h = 5381;
+    for (var i = 0; i < str.length; i++) h = (h * 33 + (str.charCodeAt(i) & 0xff)) % 4294967296;
+    return ("0000000" + h.toString(16)).slice(-8);
+  }
+  function fingerprint(cls, outTabs) {
+    var parts = [cls];
+    for (var t = 0; t < outTabs.length; t++) {
+      var list = outTabs[t].talents; // already sorted by (tier,col)
+      var minT = Infinity, minC = Infinity;
+      for (var i = 0; i < list.length; i++) { if (list[i].tier < minT) minT = list[i].tier; if (list[i].col < minC) minC = list[i].col; }
+      if (!isFinite(minT)) minT = 0; if (!isFinite(minC)) minC = 0;
+      parts.push("n" + list.length);
+      for (var j = 0; j < list.length; j++) parts.push((list[j].tier - minT) + "," + (list[j].col - minC) + "," + list[j].maxRank);
+    }
+    return djb2(parts.join("|"));
+  }
+
+  // ---- Talented-format codec (must match Loadouts.lua). ranks: per-tab arrays in (tier,col) order.
+  var MAP_URL = "0zMcmVokRsaqbdrfwihuGINALpTjnyxtgevE";
+  var STOP = "Z";
+  var CLASSMAP = ["DRUID", "HUNTER", "MAGE", "PALADIN", "PRIEST", "ROGUE", "SHAMAN", "WARLOCK", "WARRIOR", "DEATHKNIGHT"];
+
+  function rtrim(s, c) { var l = s.length; while (l > 0 && s[l - 1] === c) l--; return s.slice(0, l); }
+
+  // counts: array of per-tab talent counts (sorted (tier,col) order). ranks[tab] = array of ranks.
+  function encode(cls, counts, ranks, map) {
+    map = map || MAP_URL;
+    var ci = CLASSMAP.indexOf(cls); if (ci < 0) return null;
+    var ccode = map[ci * 3];
+    var zero = map[0], code = "";
+    for (var tab = 0; tab < counts.length; tab++) {
+      var r = ranks[tab] || [], idx = 0;
+      while (idx < counts[tab]) {
+        var r1 = r[idx] || 0, r2 = idx + 1 < counts[tab] ? (r[idx + 1] || 0) : 0;
+        code += map[r1 * 6 + r2];
+        idx += 2;
+      }
+      var nc = rtrim(code, zero);
+      if (nc !== code) code = nc + STOP;
+    }
+    return ccode + rtrim(code, STOP);
+  }
+
+  function classFromChar(map, ch) {
+    var p = map.indexOf(ch); if (p < 0) return null;
+    return CLASSMAP[Math.floor(p / 3)] || null;
+  }
+
+  function decode(code, counts, map) {
+    map = map || MAP_URL;
+    var cls = classFromChar(map, code[0]); if (!cls) return null;
+    var ranks = [[]], tab = 0, cnt = counts[0] || 0, t = ranks[0];
+    function nextTab() { tab++; ranks[tab] = []; t = ranks[tab]; cnt = counts[tab] || 0; }
+    for (var i = 1; i < code.length; i++) {
+      var ch = code[i];
+      if (ch === STOP) { if (t.length >= cnt) nextTab(); nextTab(); }
+      else {
+        var v = map.indexOf(ch); if (v < 0) return null;
+        var b = v % 6, a = (v - b) / 6;
+        if (t.length >= cnt) nextTab();
+        t.push(a);
+        if (t.length < cnt) t.push(b);
+      }
+    }
+    for (var tb = 0; tb < counts.length; tb++) { ranks[tb] = ranks[tb] || []; for (var z = 0; z < counts[tb]; z++) ranks[tb][z] = ranks[tb][z] || 0; }
+    return { cls: cls, ranks: ranks };
+  }
+
+  return {
+    parse: parse, buildTrees: buildTrees, fingerprint: fingerprint, djb2: djb2,
+    encode: encode, decode: decode, CLASS_BIT: CLASS_BIT,
+  };
+});
+
+</script>
+<script>
+/* ===== inlined: resolve.js ===== */
+// resolve.js — given the archives found under a WoW Data folder, resolve each DBFilesClient file to
+// the WINNING copy by WoW's override order: within a chain, patch letters Z->A, then patch numbers
+// high->low, then the unnumbered patch, then base archives; the LOCALE chain overrides the base chain
+// (that's where DBFilesClient lives). Loose directory-as-MPQ patches (tswow) are handled too.
+(function (root, factory) {
+  var MPQ = (root && root.MPQ) || (typeof require === "function" ? require("./mpq.js") : null);
+  var api = factory(MPQ);
+  if (root) root.Resolve = api;                                             // browser global (window.Resolve)
+  if (typeof module === "object" && module.exports) module.exports = api;   // Node
+})(typeof globalThis !== "undefined" ? globalThis : (typeof self !== "undefined" ? self : this), function (MPQ) {
+  "use strict";
+
+  // Classify an archive filename into a sortable priority {group, kind, value}. Higher wins.
+  function classify(fname, locale) {
+    var b = fname.replace(/\.mpq$/i, "").toLowerCase();
+    var loc = (locale || "").toLowerCase();
+    var group = 0;
+    if (loc && b.indexOf(loc) >= 0) { group = 1; b = b.replace(new RegExp("-?" + loc, "g"), ""); }
+    b = b.replace(/--+/g, "-").replace(/^-|-$/g, "");
+    var m, kind = 0, value = 0;
+    if (b === "patch") { kind = 1; value = 0; }
+    else if ((m = b.match(/^patch-([a-z])$/))) { kind = 3; value = m[1].charCodeAt(0) - 96; }
+    else if ((m = b.match(/^patch-(\d+)$/))) { kind = 2; value = parseInt(m[1], 10); }
+    else {
+      var rank = { locale: 5, base: 4, "expansion-locale": 3, "lichking-locale": 3, expansion: 2, lichking: 2, "common-2": 1, common: 1, backup: 0 };
+      kind = 0; value = rank[b] !== undefined ? rank[b] : 0;
+    }
+    return { group: group, kind: kind, value: value };
+  }
+
+  function cmp(a, b) {
+    // The letter/number rank dominates (a base letter-patch like patch-C beats the stock locale
+    // archives); locale-vs-base is only a tiebreaker within the same rank.
+    if (a.kind !== b.kind) return b.kind - a.kind;       // letter > number > unnumbered patch > base
+    if (a.value !== b.value) return b.value - a.value;   // Z>..>A ; higher number first
+    return b.group - a.group;                            // tiebreak: locale chain over base
+  }
+
+  // sources: [{ name, archive }]  where archive is an opened MPQArchive OR a loose-dir adapter
+  //          (any object exposing hasFile(path) and readFile(path)).
+  // Returns a resolver: { has(file), read(file), info(file) }.
+  function make(sources, locale) {
+    var ordered = sources.slice().map(function (s) {
+      return { name: s.name, archive: s.archive, key: classify(s.name, locale) };
+    }).sort(function (a, b) { return cmp(a.key, b.key); });
+
+    return {
+      order: ordered.map(function (o) { return o.name; }),
+      has: function (file) { return ordered.some(function (o) { return o.archive.hasFile(file); }); },
+      info: function (file) { for (var i = 0; i < ordered.length; i++) if (ordered[i].archive.hasFile(file)) return ordered[i].name; return null; },
+      read: async function (file) {
+        for (var i = 0; i < ordered.length; i++) if (ordered[i].archive.hasFile(file)) return await ordered[i].archive.readFile(file);
+        return null;
+      },
+    };
+  }
+
+  return { classify: classify, make: make };
+});
+
+</script>
+<script>
+/* ===== inlined: blp.js ===== */
+// blp.js — minimal BLP2 decoder (WoW 3.3.5a icons), browser + Node. Decodes mip 0 to RGBA.
+// Handles the three compressions icons use: DXTC (DXT1/3/5), palettized (RAW1), and BGRA (RAW3).
+(function (root, factory) {
+  var api = factory();
+  if (root) root.BLP = api;                                                 // browser global (window.BLP)
+  if (typeof module === "object" && module.exports) module.exports = api;   // Node
+})(typeof globalThis !== "undefined" ? globalThis : (typeof self !== "undefined" ? self : this), function () {
+  "use strict";
+
+  function rgb565(c) {
+    var r = (c >> 11) & 31, g = (c >> 5) & 63, b = c & 31;
+    return [(r * 255 / 31) | 0, (g * 255 / 63) | 0, (b * 255 / 31) | 0];
+  }
+
+  // DXT colour endpoints -> 4 colours. dxt1Punch = DXT1 1-bit-alpha mode (c0<=c1 -> 3 colours + clear).
+  function dxtColors(c0, c1, dxt1Punch) {
+    var a = rgb565(c0), b = rgb565(c1);
+    if (dxt1Punch) {
+      return [a, b,
+        [(a[0] + b[0]) >> 1, (a[1] + b[1]) >> 1, (a[2] + b[2]) >> 1, 255],
+        [0, 0, 0, 0]];
+    }
+    return [
+      [a[0], a[1], a[2], 255], [b[0], b[1], b[2], 255],
+      [(2 * a[0] + b[0]) / 3 | 0, (2 * a[1] + b[1]) / 3 | 0, (2 * a[2] + b[2]) / 3 | 0, 255],
+      [(a[0] + 2 * b[0]) / 3 | 0, (a[1] + 2 * b[1]) / 3 | 0, (a[2] + 2 * b[2]) / 3 | 0, 255]];
+  }
+
+  function dxt5Alphas(a0, a1) {
+    var al = [a0, a1];
+    if (a0 > a1) { for (var i = 1; i <= 6; i++) al.push(((7 - i) * a0 + i * a1) / 7 | 0); }
+    else { for (var j = 1; j <= 4; j++) al.push(((5 - j) * a0 + j * a1) / 5 | 0); al.push(0); al.push(255); }
+    return al;
+  }
+
+  function decodeDXT(data, w, h, alphaType, out) {
+    var p = 0;
+    for (var by = 0; by < h; by += 4) {
+      for (var bx = 0; bx < w; bx += 4) {
+        var alphaBlock = null, dxt5 = null;
+        if (alphaType === 1) { alphaBlock = data.subarray(p, p + 8); p += 8; }       // DXT3
+        else if (alphaType === 7) {                                                  // DXT5
+          alphaBlock = data.subarray(p, p + 8);
+          dxt5 = dxt5Alphas(alphaBlock[0], alphaBlock[1]);
+          p += 8;
+        }
+        var c0 = data[p] | (data[p + 1] << 8);
+        var c1 = data[p + 2] | (data[p + 3] << 8);
+        var bits = (data[p + 4] | (data[p + 5] << 8) | (data[p + 6] << 16) | (data[p + 7] << 24)) >>> 0;
+        p += 8;
+        var cols = dxtColors(c0, c1, alphaType === 0 && c0 <= c1);
+        for (var py = 0; py < 4; py++) {
+          for (var px = 0; px < 4; px++) {
+            var x = bx + px, y = by + py;
+            if (x >= w || y >= h) continue;
+            var pi = py * 4 + px;
+            var col = cols[(bits >>> (2 * pi)) & 3];
+            var o = (y * w + x) * 4;
+            out[o] = col[0]; out[o + 1] = col[1]; out[o + 2] = col[2];
+            if (alphaType === 1) {              // DXT3: explicit 4-bit
+              out[o + 3] = ((alphaBlock[pi >> 1] >> ((pi & 1) * 4)) & 0xf) * 17;
+            } else if (alphaType === 7) {       // DXT5: indexed
+              var bit = 3 * pi, bi = 2 + (bit >> 3), sh = bit & 7;
+              var idx = ((alphaBlock[bi] | ((alphaBlock[bi + 1] || 0) << 8)) >> sh) & 7;
+              out[o + 3] = dxt5[idx];
+            } else {                            // DXT1
+              out[o + 3] = col.length > 3 ? col[3] : 255;
+            }
+          }
+        }
+      }
+    }
+  }
+
+  function decode(bytes) {
+    var dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    if (!(bytes[0] === 0x42 && bytes[1] === 0x4c && bytes[2] === 0x50 && bytes[3] === 0x32)) throw new Error("not BLP2");
+    var compression = bytes[8], alphaDepth = bytes[9], alphaType = bytes[10];
+    var width = dv.getUint32(12, true), height = dv.getUint32(16, true);
+    var mip0 = dv.getUint32(20, true), size0 = dv.getUint32(20 + 64, true);
+    var data = bytes.subarray(mip0, mip0 + (size0 || bytes.length - mip0));
+    var out = new Uint8ClampedArray(width * height * 4);
+
+    if (compression === 2) {
+      decodeDXT(data, width, height, alphaType, out);
+    } else if (compression === 1) {            // palettized: 256 BGRA palette @ 148, then 8-bit indices
+      var pal = bytes.subarray(148, 148 + 1024);
+      var n = width * height;
+      for (var i = 0; i < n; i++) {
+        var idx = data[i] * 4;
+        out[i * 4] = pal[idx + 2]; out[i * 4 + 1] = pal[idx + 1]; out[i * 4 + 2] = pal[idx];
+        if (alphaDepth === 8) out[i * 4 + 3] = data[n + i];
+        else if (alphaDepth === 1) out[i * 4 + 3] = ((data[n + (i >> 3)] >> (i & 7)) & 1) ? 255 : 0;
+        else out[i * 4 + 3] = 255;
+      }
+    } else if (compression === 3) {            // raw BGRA
+      var m = width * height;
+      for (var k = 0; k < m; k++) {
+        out[k * 4] = data[k * 4 + 2]; out[k * 4 + 1] = data[k * 4 + 1];
+        out[k * 4 + 2] = data[k * 4]; out[k * 4 + 3] = data[k * 4 + 3];
+      }
+    } else {
+      throw new Error("unsupported BLP compression " + compression);
+    }
+    return { width: width, height: height, rgba: out };
+  }
+
+  return { decode: decode };
+});
+
+</script>
+<script>
+"use strict";
+const MAX_POINTS = 71;
+const LOCALES = ["enUS","enGB","koKR","frFR","deDE","zhCN","zhTW","esES","esMX","ruRU","ptBR","itIT"];
+const DBFILES = name => "DBFilesClient\\" + name;
+
+const el = id => document.getElementById(id);
+function setStatus(msg, err){ const s = el("status"); s.textContent = msg; s.className = err ? "err" : ""; }
+
+// reader over a browser File (slice-on-demand so huge MPQs aren't loaded whole)
+function fileReader(file){
+  return { size: file.size, read: (off, len) => file.slice(off, off + len).arrayBuffer() };
+}
+
+let ENGINE = null;        // { trees, fpByClass, locale }
+let CURRENT = null;       // class name
+const STATE = {};         // STATE[class] = [ tab arrays of ranks ]
+let POS = {};             // POS[class] = { idToPos: {talentId:{tab,i}} }
+
+el("picker").addEventListener("change", async (e) => {
+  const files = Array.from(e.target.files || []);
+  const mpqs = files.filter(f => /\.mpq$/i.test(f.name));
+  if (!mpqs.length){ setStatus("No .MPQ files found under that folder. Pick the WoW 'Data' folder.", true); return; }
+
+  // detect locale from a subfolder name
+  let locale = "enUS";
+  for (const f of files){ const m = (f.webkitRelativePath || "").match(new RegExp("/(" + LOCALES.join("|") + ")/", "i")); if (m){ locale = m[1]; break; } }
+
+  setStatus(`Opening ${mpqs.length} archives…`);
+  const diag = el("diag"); diag.style.display = ""; diag.textContent = "opening…";
+  const failed = [];
+  try{
+    const sources = [];
+    for (const f of mpqs){
+      try{ sources.push({ name: f.name, archive: await window.MPQ.open(fileReader(f)) }); }
+      catch(err){ failed.push(`${f.name} (${err.message})`); }
+    }
+    const R = window.Resolve.make(sources, locale);
+    const need = ["Talent.dbc","TalentTab.dbc","Spell.dbc","SpellIcon.dbc"];
+
+    // diagnostics: what opened, what failed, and where each DBC was found vs which won
+    let report = `locale: ${locale}\nopened ${sources.length}/${mpqs.length} archives`;
+    if (failed.length) report += `\n⚠ could NOT open (${failed.length}): ${failed.join(", ")}`;
+    for (const n of need){
+      const holders = sources.filter(s => s.archive.hasFile(DBFILES(n))).map(s => s.name);
+      report += `\n${n}: found in [${holders.join(", ") || "none"}]  →  using ${R.info(DBFILES(n)) || "NONE"}`;
+    }
+    diag.textContent = report;
+
+    for (const n of need){ if (!R.has(DBFILES(n))){ setStatus(`Could not find ${n} in any opened archive.`, true); return; } }
+
+    setStatus("Reading DBCs (Spell.dbc is large — a moment)…");
+    const archByName = {}; for (const s of sources) archByName[s.name] = s.archive;
+    async function peek(arch, ent){
+      try{
+        const abs = arch.archiveOffset + ent.filePos;
+        if (ent.flags & 0x1000000) return { sec0: ent.cSize, byte: (new Uint8Array(await arch.reader.read(abs, 1)))[0] };
+        const ns = Math.ceil(ent.fSize / arch.sectorSize);
+        const offU = new Uint32Array(await arch.reader.read(abs, (ns + 1) * 4));
+        const sec0 = offU[1] - offU[0];
+        return { sec0, byte: (new Uint8Array(await arch.reader.read(abs + offU[0], 1)))[0] };
+      }catch(e){ return { sec0: "?", byte: "?" }; }
+    }
+    const dbcBytes = {}; let bad = null;
+    for (const n of need){
+      const file = DBFILES(n);
+      const arch = archByName[R.info(file)];
+      const ent = arch && arch.findFile(file);
+      const bytes = new Uint8Array(await R.read(file));
+      dbcBytes[n] = bytes;
+      const magic = String.fromCharCode(bytes[0]||0, bytes[1]||0, bytes[2]||0, bytes[3]||0);
+      if (magic !== "WDBC" && !bad){
+        const pk = await peek(arch, ent);
+        const fb = Array.from(bytes.slice(0,12)).map(x=>x.toString(16).padStart(2,"0")).join(" ");
+        bad = `${n} from ${R.info(file)} decoded to non-DBC bytes:\n  flags=0x${(ent&&ent.flags||0).toString(16)}  sectorSize=${arch&&arch.sectorSize}  fSize=${ent&&ent.fSize}  sector0Bytes=${pk.sec0}  compressionByte=${typeof pk.byte==="number"?"0x"+pk.byte.toString(16):pk.byte}\n  decoded magic="${magic}"  firstBytes: ${fb}`;
+      }
+    }
+    if (bad){ diag.textContent += "\n\n⚠ " + bad; setStatus("A DBC failed to decode — see diagnostics below.", true); return; }
+    async function optDbc(n){ if (!R.has(DBFILES(n))) return null; try { return new Uint8Array(await R.read(DBFILES(n))); } catch (e) { return null; } }
+    const durBytes = await optDbc("SpellDuration.dbc");
+    const radBytes = await optDbc("SpellRadius.dbc");
+    const trees = window.DBC.buildTrees(dbcBytes["Talent.dbc"], dbcBytes["TalentTab.dbc"], dbcBytes["Spell.dbc"], dbcBytes["SpellIcon.dbc"], durBytes, radBytes);
+
+    ENGINE = { trees, locale, R };
+    buildPositions();
+    setStatus(`Loaded ${Object.keys(trees).length} classes (Talent.dbc → ${R.info(DBFILES("Talent.dbc"))}).`);
+    el("metaRow").style.display = "";
+    initClassBar();
+    selectClass(Object.keys(trees).sort()[0]);
+  }catch(err){
+    console.error(err);
+    setStatus("Error: " + err.message, true);
+    diag.textContent += "\nERROR: " + err.message;
+  }
+});
+
+function buildPositions(){
+  POS = {};
+  for (const cls in ENGINE.trees){
+    const idToPos = {};
+    ENGINE.trees[cls].tabs.forEach((t, ti) => t.talents.forEach((tal, i) => { idToPos[tal.id] = { tab: ti, i }; }));
+    POS[cls] = { idToPos };
+    if (!STATE[cls]) STATE[cls] = ENGINE.trees[cls].tabs.map(t => t.talents.map(() => 0));
+  }
+}
+
+function initClassBar(){
+  const bar = el("classBar"); bar.innerHTML = "";
+  Object.keys(ENGINE.trees).sort().forEach(cls => {
+    const b = document.createElement("button");
+    b.textContent = cls.charAt(0) + cls.slice(1).toLowerCase();
+    b.dataset.cls = cls;
+    b.onclick = () => selectClass(cls);
+    bar.appendChild(b);
+  });
+}
+
+function selectClass(cls){
+  CURRENT = cls;
+  for (const b of el("classBar").children) b.classList.toggle("active", b.dataset.cls === cls);
+  el("totals").style.display = ""; el("io").style.display = "";
+  el("fpPill").textContent = "fingerprint " + ENGINE.trees[cls].fingerprint;
+  render();
+}
+
+// ---- rules ----
+const tree = () => ENGINE.trees[CURRENT];
+const ranks = () => STATE[CURRENT];
+function treePoints(tab){ return ranks()[tab].reduce((a,b)=>a+b,0); }
+function totalPoints(){ return ranks().reduce((s,arr)=>s+arr.reduce((a,b)=>a+b,0),0); }
+function tierUnlocked(tab, tier){ return treePoints(tab) >= tier * 5; }   // tier is 0-based (DBC)
+function prereqMet(tab, i){
+  const tal = tree().tabs[tab].talents[i];
+  for (let k=0;k<tal.prereq.length;k++){
+    const pid = tal.prereq[k]; if (!pid) continue;
+    const p = POS[CURRENT].idToPos[pid]; if (!p) continue;
+    const req = tal.prereqRank[k] || tree().tabs[p.tab].talents[p.i].maxRank;
+    if (ranks()[p.tab][p.i] < req) return false;
+  }
+  return true;
+}
+function canAdd(tab, i){
+  const tal = tree().tabs[tab].talents[i];
+  if (ranks()[tab][i] >= tal.maxRank) return false;
+  if (totalPoints() >= MAX_POINTS) return false;
+  if (!tierUnlocked(tab, tal.tier)) return false;
+  if (!prereqMet(tab, i)) return false;
+  return true;
+}
+// remove a point + cascade out anything now-illegal
+function prune(){
+  let changed = true;
+  while (changed){
+    changed = false;
+    tree().tabs.forEach((t, tab) => t.talents.forEach((tal, i) => {
+      if (ranks()[tab][i] > 0 && (!tierUnlocked(tab, tal.tier) || !prereqMet(tab, i))){ ranks()[tab][i] = 0; changed = true; }
+    }));
+  }
+}
+
+// ---- render ----
+function render(){
+  const host = el("trees"); host.innerHTML = "";
+  const CW = 58, CH = 58;
+  tree().tabs.forEach((t, tab) => {
+    const col = document.createElement("div"); col.className = "tree";
+    const maxCol = Math.max(...t.talents.map(x=>x.col), 3);
+    const maxTier = Math.max(...t.talents.map(x=>x.tier), 0);
+    const h = document.createElement("h3");
+    h.innerHTML = `<span>${t.name}</span><span class="pts" id="pts-${tab}"></span>`;
+    col.appendChild(h);
+    const grid = document.createElement("div"); grid.className = "grid";
+    grid.style.width = (maxCol+1)*CW + "px"; grid.style.height = (maxTier+1)*CH + "px";
+    t.talents.forEach((tal, i) => {
+      const d = document.createElement("div"); d.className = "talent";
+      d.style.left = tal.col*CW + "px"; d.style.top = tal.tier*CH + "px";
+      d.innerHTML = `<span class="rank"></span>`;
+      if (tal.icon) setIcon(d, tal.icon);
+      d.onclick = () => { if (canAdd(tab, i)){ ranks()[tab][i]++; render(); } };
+      d.oncontextmenu = (ev) => { ev.preventDefault(); if (ranks()[tab][i] > 0){ ranks()[tab][i]--; prune(); render(); } };
+      d.onmouseenter = () => showHover(tab, i);
+      d.dataset.tab = tab; d.dataset.i = i;
+      grid.appendChild(d);
+    });
+    col.appendChild(grid);
+    host.appendChild(col);
+  });
+  refresh();
+}
+
+function refresh(){
+  const total = totalPoints();
+  el("totals").innerHTML = `Total spent: <b>${total} / ${MAX_POINTS}</b>`;
+  tree().tabs.forEach((t, tab) => { const p = el("pts-"+tab); if (p) p.textContent = treePoints(tab); });
+  for (const d of document.querySelectorAll(".talent")){
+    const tab = +d.dataset.tab, i = +d.dataset.i;
+    const tal = tree().tabs[tab].talents[i], r = ranks()[tab][i];
+    d.querySelector(".rank").textContent = r + "/" + tal.maxRank;
+    let cls = "talent ";
+    if (r >= tal.maxRank) cls += "s-max";
+    else if (r > 0) cls += "s-partial";
+    else if (tierUnlocked(tab, tal.tier) && prereqMet(tab, i)) cls += "s-avail";
+    else cls += "s-locked";
+    d.className = cls;
+  }
+  updateExport();
+}
+
+// ---- icons (BLP -> canvas -> data URL, cached by path) ----
+const iconCache = {};
+function setIcon(cell, iconPath){
+  const cached = iconCache[iconPath];
+  if (typeof cached === "string"){ if (cached) cell.style.backgroundImage = `url(${cached})`; return; }
+  loadIcon(iconPath).then(url => { if (url) cell.style.backgroundImage = `url(${url})`; });
+}
+async function loadIcon(iconPath){
+  if (typeof iconCache[iconPath] === "string") return iconCache[iconPath] || null;
+  if (!ENGINE || !ENGINE.R) return null;
+  try{
+    const file = iconPath + ".blp";
+    if (!ENGINE.R.has(file)){ iconCache[iconPath] = ""; return null; }
+    const bytes = new Uint8Array(await ENGINE.R.read(file));
+    const img = window.BLP.decode(bytes);
+    const cv = document.createElement("canvas"); cv.width = img.width; cv.height = img.height;
+    cv.getContext("2d").putImageData(new ImageData(img.rgba, img.width, img.height), 0, 0);
+    const url = cv.toDataURL();
+    iconCache[iconPath] = url; return url;
+  }catch(e){ iconCache[iconPath] = ""; return null; }
+}
+
+function esc(s){ return String(s).replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
+function showHover(tab, i){
+  const tal = tree().tabs[tab].talents[i];
+  const r = ranks()[tab][i];
+  const tips = tal.tooltips || [];
+  const cur = tips.length ? tips[Math.min(Math.max(1, r), tips.length) - 1] : "";
+  const next = (r < tal.maxRank && tips[r]) ? tips[r] : "";
+  let html = `<b>${esc(tal.name)}</b> <span style="color:var(--dim)">— rank ${r}/${tal.maxRank} · tier ${tal.tier+1}</span>`;
+  if (cur) html += `<br><span style="color:var(--text)">${esc(cur)}</span>`;
+  if (next && next !== cur) html += `<br><span style="color:var(--dim)">Next rank: ${esc(next)}</span>`;
+  el("hover").innerHTML = html;
+}
+
+// ---- export / import (addon-compatible) ----
+function counts(){ return tree().tabs.map(t => t.talents.length); }
+function realmLabel(){ const v = el("realm").value.trim(); return v || (ENGINE.locale ? "CustomRealm" : "this server"); }
+function updateExport(){
+  const code = window.DBC.encode(CURRENT, counts(), ranks());
+  const tagged = code + ":DUI=" + ENGINE.trees[CURRENT].fingerprint + ";S=" + realmLabel();
+  el("exportBox").value = tagged;
+}
+el("importBtn").addEventListener("click", () => {
+  let text = el("importBox").value.trim();
+  if (!text) return;
+  // strip URL + our ':' metadata
+  let frag = text.match(/[#?]talent#(.+)$/) || text.match(/talent-calc[^#]*#?\/?(.+)$/);
+  let code = frag ? frag[1] : text;
+  const colon = code.indexOf(":"); if (colon >= 0) code = code.slice(0, colon);
+  const dec = window.DBC.decode(code, counts());
+  if (!dec){ setStatus("Could not read that build string.", true); return; }
+  if (dec.cls && dec.cls !== CURRENT){ selectClassIfExists(dec.cls); }
+  const r = ranks();
+  for (let tab=0; tab<r.length; tab++) for (let i=0;i<r[tab].length;i++) r[tab][i] = (dec.ranks[tab] && dec.ranks[tab][i]) || 0;
+  prune(); render();
+  setStatus("Imported build for " + (dec.cls || CURRENT) + ".");
+});
+function selectClassIfExists(cls){ if (ENGINE.trees[cls]){ selectClass(cls); } }
+</script>
+</body>
+</html>
