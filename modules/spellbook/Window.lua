@@ -233,8 +233,9 @@ local function buildWindow()
   local f = CreateFrame("Frame", FRAME_NAME, UIParent)
   f:SetSize(SB.minimized and SB.MIN_W or SB.FRAME_W, SB.FRAME_H)
   f:SetPoint("TOP", UIParent, "TOP", 0, -55)
-  -- Retail PlayerSpellsFrame: MEDIUM + toplevel (so the clicked window raises within its strata).
-  f:SetFrameStrata("MEDIUM")
+  -- HIGH + toplevel so an enlarged window stays above the action/spell bars (which sit in MEDIUM);
+  -- toplevel raises the clicked window within its strata.
+  f:SetFrameStrata("HIGH")
   f:SetToplevel(true)
   -- Drag-to-move WITH saved position (persists account-wide across /reload + sessions).
   if NE.FrameUtil and NE.FrameUtil.PersistWindowPosition then

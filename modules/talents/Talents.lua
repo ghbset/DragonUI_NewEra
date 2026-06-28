@@ -477,8 +477,9 @@ local function buildWindow()
   local f = CreateFrame("Frame", "NE_TalentFrame", UIParent)
   f:SetSize(TALENT_W, TALENT_H)
   f:SetPoint("TOP", UIParent, "TOP", 0, FRAME_TOP_OFFSET)
-  -- Retail PlayerSpellsFrame: MEDIUM + toplevel (so the clicked window raises within its strata).
-  f:SetFrameStrata("MEDIUM")
+  -- HIGH + toplevel so an enlarged window stays above the action/spell bars (which sit in MEDIUM);
+  -- toplevel raises the clicked window within its strata.
+  f:SetFrameStrata("HIGH")
   f:SetToplevel(true)
   -- Drag-to-move WITH saved position (persists account-wide across /reload + sessions, like the
   -- spellbook). Falls back to the default TOP anchor on first use.
