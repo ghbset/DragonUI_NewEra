@@ -40,7 +40,7 @@ NE.tex.RegisterLocal(5882640, P .. "5882640-character-panel-background.blp") -- 
 -- CreateMaskTexture, which returns nil on 3.3.5a). So we baked a circular alpha mask into each class
 -- cell offline (DXT5→DDS decode → per-cell circle mask → TGA). Same layout, so the texcoords below
 -- are unchanged. Half-res (1024x512) RLE TGA; normalized texcoords are resolution-independent.
-NE.tex.RegisterLocal(1662186, P .. "1662186-classicon.tga")                  -- circular class icons (baked)
+NE.tex.RegisterLocal(1662186, P .. "1662186-classicon.blp")                  -- circular class icons (baked)
 
 -- Char-Paperdoll-{Parts,Horizontal,Vertical} — inner-border edges/corners + slot frames.
 NE.tex.RegisterLocal(410247, P .. "410247-charpaperdoll.blp")                -- 32x16  DXT5; horizontal h-tile edges
