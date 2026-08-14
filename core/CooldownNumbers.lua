@@ -178,3 +178,22 @@ end
 
 -- Expose the formatter — the BuffBar duration label wants the same abbreviation rules.
 NE.cd.FormatTime = formatTime
+
+-- The OTHER timer string, for bars rather than swipes. Retail draws countdown BARS with
+-- SecondsFormatter OneLetter, 2 desired units, minimum Seconds (EncounterTimelineConstants.lua:216)
+-- — "45s", "1m30s", "1h2m" — where a cooldown SWIPE is bare ("45", "2m"). They are not
+-- interchangeable, so both live here rather than one call site inventing its own.
+--
+-- Added for modules/bossmods (the boss-timer downport), which is what NewEra's source called
+-- NE.cd.FormatBarTime; the Cooldown Manager's own bars keep FormatTime, which is what they use today.
+function NE.cd.FormatBarTime(t)
+  t = tonumber(t) or 0
+  if t < 1 then return string.format("%.1f", t) end
+  if t < 60 then return string.format("%ds", t) end
+  if t < 3600 then
+    local m, s = math.floor(t / 60), math.floor(t % 60)
+    return s > 0 and string.format("%dm%ds", m, s) or string.format("%dm", m)
+  end
+  local h, m = math.floor(t / 3600), math.floor((t % 3600) / 60)
+  return m > 0 and string.format("%dh%dm", h, m) or string.format("%dh", h)
+end

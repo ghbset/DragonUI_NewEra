@@ -71,6 +71,21 @@ lua5.1 qa/offline/test_levelup.lua
 Unlike `test_boot.lua` this one runs on stock Lua 5.1 (it stubs no rendering, only data), and it
 deliberately covers `Assets`/`Data`/`Harvest`/`Unlocks` but not the two view files — see its header.
 
+Drive the boss timers end to end against a stubbed client and a fake DBM (67 assertions) — the
+`requiresAddOn` gate with and without DBM, the settings store, boot and editor registration, bar/
+warning suppression, the timer feed, pause/resume, warning tiering, both views, the editor preview,
+atlas coverage and the slash command:
+
+```bash
+luajit qa/offline/test_bossmods.lua
+```
+
+The fake DBM models the **installed** 3.3.5a fork (`AddOns/DBM-Core`, `AddOns/DBM-StatusBarTimers`),
+not DBM master: it fires `DBM_TimerStart` and never `DBM_TimerBegin`, its payload stops at `guid`,
+and its bars live on two unnamed anchors — the second of which does not exist until a huge bar is
+created. That last detail is the one the 1.15 source's suppression would have missed, so it has its
+own assertion. See `modules/bossmods/PORT_PLAN.md` §B.
+
 ## What test_boot.lua stubs
 
 A minimal widget API (`CreateFrame`, textures, font strings, scripts, events) plus the 3.3.5a game

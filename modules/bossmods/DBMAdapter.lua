@@ -1,0 +1,304 @@
+-- DragonUI_NewEra/modules/bossmods/DBMAdapter.lua — the DBM backend for the boss-timer renderers.
+--
+-- Downport of ReferenceAddons/NewEra/Alerts/BossMods/DBMAdapter.lua. It feeds the same internal bus
+-- (BM.Bus*) the source did; Register.lua calls BM.RegisterWithDBM() at boot, gated on DBM being
+-- installed at all.
+--
+-- ============================ CONTRACT (read off the INSTALLED DBM) ==========================
+--
+-- The source was written against DBM master (a 2026 retail/Classic core). This client runs the
+-- WotLK 3.3.5a fork (AddOns/DBM-Core + AddOns/DBM-StatusBarTimers), which is compatible but
+-- NARROWER, and differs in two ways that matter. Everything below was verified in that source,
+-- not assumed from the upstream contract:
+--
+--   Mechanics — unchanged. DBM:RegisterCallback(event, fn) (DBM-Core.lua:1564), invoked
+--   pcall(fn, event, ...) (:1540): the event name arrives FIRST, ahead of the payload.
+--
+--   DBM_TimerStart (DBM-Core.lua:10049)
+--       id, msg, timer, icon, timerType, spellId, colorId, modId, keep, fade, name, guid
+--     * DBM_TimerBegin — the modern rename the source registered FIRST — is never fired by this
+--       fork. Registering both is still correct and free: one of them simply never arrives, and a
+--       server running a newer core would send that one instead. Same id ⇒ the bus dedupes.
+--     * The arg list STOPS at `guid`. timerCount / isPriority / fullType / hasVariance /
+--       variancePeakTimer / isBarEnabled do not exist here, so they arrive nil — which is why both
+--       guards below are written to degrade rather than assume: `isBarEnabled == false` is never
+--       true (nothing is wrongly dropped) and `hasVariance` is never set (no bar is drawn as
+--       approximate). Both stay, so a newer core is honoured the moment one appears.
+--     * id is DBM's real timer id (unique per instance, target args appended) — our bus key.
+--     * icon is a texture path or fileID; msg is pre-localized display text.
+--   DBM_TimerStop (id[, guid]) · DBM_TimerPause (id) · DBM_TimerResume (id)
+--   DBM_TimerUpdate (id, elapsed, totalTime) — re-baseline remaining/max.
+--   DBM_Announce (message, icon, type, spellId, modId, isSpecial) — DBM-Core.lua:8183
+--     (isSpecial=false, a regular announce) and :9259 (isSpecial=true, a special warning).
+--   DBM_Wipe (mod) — DBM-Core.lua:5179. Belt-cancel any bars DBM did not stop itself.
+--   DBM_Kill (mod) — DBM-Core.lua:5238. See the note on onKill: this addon has no boss banner.
+--
+-- ============================ SUPPRESSION (no double-draw) ===================================
+--
+-- DBM's own DontShow*/HideDBM* options CANNOT be used for this: every one of them early-returns
+-- BEFORE the callback fires, which would starve our renderer of the very events it draws. So
+-- suppress VISUALLY, session-only, with no SavedVariable writes — nothing to stash or restore.
+--
+-- DOWNPORT — the source's mechanism does not work on this fork, in two independent ways:
+--   1. It reaches the bar anchor through `DBM.Bars`, which does not exist here. The bar library is
+--      the GLOBAL `DBT` (DBM-StatusBarTimers/DBT.lua:43), with GetBarIterator at :605. Ported
+--      verbatim, findDBTAnchor would return nil forever and every bar would be drawn twice.
+--   2. It assumes ONE anchor — "every DBT_Bar_N is created as a child of the one smallBarsAnchor;
+--      huge bars only re-POINT to the large anchor". This fork creates BOTH anchors unnamed at
+--      DBT.lua:179, and DBT.lua:852/:859 note that Simple/NoAnim bars are CREATED on the large
+--      anchor rather than moved to it. So we collect every distinct parent the live bars report
+--      and alpha-0 all of them, re-asserted per heard event — which also self-heals when a large
+--      anchor first appears mid-fight.
+-- The warning hosts DBMWarning (DBM-Core.lua:7812) and DBMSpecialWarning (:8849) do exist under
+-- those exact global names, so those suppress exactly as the source wrote them.
+--
+-- Sounds and voice stay DBM's, deliberately: we replace what is DRAWN, not what is heard.
+
+local NE = DragonUI_NewEra
+local BM = NE.bossmods
+if not BM then return end
+
+local OWNER = {}   -- bus owner key for every DBM-fed bar
+BM.DBM_OWNER = OWNER
+
+-- ============================ Suppression =====================================================
+
+local suppressed = {}   -- frame → "hide" | "alpha", so restoring undoes the right thing
+
+-- TWO INSTRUMENTS, and which one is right depends on what DBM does to the frame afterwards.
+--
+--   HIDE, for the bar anchors. A hidden parent hides its children, unambiguously, on every client —
+--     where a parent's ALPHA reaching its child frames is exactly the thing this client is unreliable
+--     about (PORT_PLAN §C.5d). DBT shows its two anchors once at load (DBT.lua:184, :189) and never
+--     again, so hiding them sticks, and a bar created later is born a child of an already-hidden
+--     anchor and is invisible from its first frame with no polling.
+--   HIDE + AN OnShow HOOK, for the warning hosts. Alpha was tried there first, on the reasoning that
+--     DBM re-Shows them on every announce so hiding would flicker. It does not work: DBM drives
+--     `font:SetAlpha(1)` on a 0.05s ticker (DBM-Core.lua:8036, :8878) and re-Shows the host, so an
+--     alpha we set on the parent is either composed away or simply outrun — and DBM's warning ICONS
+--     are inline |T..|t escapes INSIDE those font strings (DBM-Core.lua:8121-8127), which is why they
+--     kept appearing beside our own. Hooking OnShow to re-hide is instant, so there is no frame of
+--     flicker to trade for it.
+local function setSuppressed(frame, on, how)
+  if not frame then return end
+  how = how or "alpha"
+  if on then
+    if how == "hide" then
+      if frame:IsShown() then frame:Hide() end
+    elseif frame:GetAlpha() > 0 then
+      frame:SetAlpha(0)
+    end
+    suppressed[frame] = how
+  elseif suppressed[frame] then
+    -- CLEAR THE FLAG FIRST. The OnShow guard below reads it, so showing while it is still set means
+    -- the guard hides the frame again in the same call and suppression can never be turned off.
+    local was = suppressed[frame]
+    suppressed[frame] = nil
+    if was == "hide" then frame:Show() else frame:SetAlpha(1) end
+  end
+end
+
+-- Every distinct frame DBT parents its bars to. Both anchors are unnamed locals (DBT.lua:179), so a
+-- bar is the only handle we get to either of them.
+--
+-- PRIMARY ROUTE: the bar FRAMES are named globals — `CreateFrame("Frame", "DBT_Bar_"..n, anchor)`
+-- (DBT.lua:249) — and a released bar keeps both its name and its parent, sitting in DBT's reuse pool.
+-- So this finds the anchors even with nothing running, which the live-bar iterator cannot: DBM fires
+-- DBM_TimerStart BEFORE it creates the bar (DBM-Core.lua:10049), so on the very first timer of a
+-- pull the iterator is still empty and there is nothing to hide. That is why DBM's own bars were
+-- still on screen for `/dbm test`.
+--
+-- Cached across calls (anchors are created once and never replaced) and re-walked each time, so the
+-- large anchor is picked up the first time a huge bar exists.
+local dbtAnchors = {}
+local MAX_BAR_SCAN = 200   -- belt: DBT numbers bars from 1 with no gaps, so this stops at the end
+
+local function collectDBTAnchors()
+  for i = 1, MAX_BAR_SCAN do
+    local f = _G["DBT_Bar_" .. i]
+    if not f then break end
+    local ok, parent = pcall(f.GetParent, f)
+    if ok and parent then dbtAnchors[parent] = true end
+  end
+
+  -- Fallback: the live iterator, for any bar frame that is not one of those globals.
+  local dbt = _G.DBT
+  if not (dbt and dbt.GetBarIterator) then return dbtAnchors end
+  local ok, iter, state = pcall(dbt.GetBarIterator, dbt)
+  if not ok or not iter then return dbtAnchors end
+  pcall(function()
+    for bar in iter, state do
+      local p = bar and bar.frame and bar.frame.GetParent and bar.frame:GetParent()
+      if p then dbtAnchors[p] = true end
+    end
+  end)
+  return dbtAnchors
+end
+
+local function wantSuppression()
+  if not BM.DBMPresent() then return false end
+  if BM.IsSuppressionEnabled and not BM.IsSuppressionEnabled() then return false end
+  return true
+end
+
+-- Re-evaluate the whole suppression state (boot + option toggle + per-event re-assert).
+function BM.ApplyDBMSuppression()
+  local Mods = NE.modules
+  local booted = Mods and Mods.IsBooted
+  local barsOn     = wantSuppression() and booted and Mods.IsBooted("bossmods") or false
+  local warningsOn = wantSuppression() and booted and Mods.IsBooted("bossmods_warnings") or false
+
+  for frame in pairs(collectDBTAnchors()) do
+    setSuppressed(frame, barsOn, "hide")
+  end
+  -- DBM builds its warning hosts lazily, so the hook is (re)tried here rather than only at boot.
+  BM.HookDBMWarningHost(_G.DBMWarning)
+  BM.HookDBMWarningHost(_G.DBMSpecialWarning)
+  setSuppressed(_G.DBMWarning, warningsOn, "hide")
+  setSuppressed(_G.DBMSpecialWarning, warningsOn, "hide")
+end
+
+-- DBM shows its warning hosts itself on every announce, so hiding one is only half the job: without
+-- this it would reappear and stay up until the next deferred pass. The hook re-hides it in the same
+-- frame it is shown, and is installed once per frame object.
+--
+-- HookScript, never SetScript: DBM owns these frames and may have its own OnShow. Hooking adds ours
+-- after theirs and takes nothing away.
+local hooked = {}
+function BM.HookDBMWarningHost(frame)
+  if not frame or hooked[frame] or not frame.HookScript then return end
+  hooked[frame] = true
+  frame:HookScript("OnShow", function(self)
+    if suppressed[self] then self:Hide() end
+  end)
+end
+
+-- Hand every suppressed frame back before we stop asserting (module turned off mid-session).
+function BM.ClearDBMSuppression()
+  -- Snapshot and clear BEFORE restoring, for the reason setSuppressed records: the OnShow guard
+  -- reads `suppressed`, so a Show() with the flag still set is undone the instant it happens.
+  local pending = {}
+  for frame, how in pairs(suppressed) do pending[frame] = how end
+  wipe(suppressed)
+  for frame, how in pairs(pending) do
+    if how == "hide" then frame:Show() else frame:SetAlpha(1) end
+  end
+end
+
+-- ============================ Callback handlers ===============================================
+
+local function onTimerStart(_, id, msg, timer, icon, _timerType, spellId, _colorId, _modId,
+                            _keep, _fade, name, _guid, _timerCount, _isPriority, _fullType,
+                            hasVariance, variancePeakTimer, isBarEnabled)
+  if id == nil or type(timer) ~= "number" or timer <= 0 then return end
+  if isBarEnabled == false then return end   -- user disabled this timer in DBM (modern cores only)
+  BM.BusStartBar(OWNER, id, msg or name or tostring(id), timer, icon,
+                 hasVariance and true or false,
+                 hasVariance and tonumber(variancePeakTimer) or nil,
+                 -- spellId feeds the hover tooltip. DBM raises plenty of timers that are not a spell
+                 -- at all (pull timers, phase timers), so it is frequently nil and the tooltip falls
+                 -- back to the ability's own label.
+                 tonumber(spellId))
+end
+
+local function onTimerStop(_, id)   BM.BusStopBar(OWNER, id) end
+local function onTimerPause(_, id)  BM.BusPauseBar(OWNER, id) end
+local function onTimerResume(_, id) BM.BusResumeBar(OWNER, id) end
+local function onTimerUpdate(_, id, elapsed, totalTime) BM.BusUpdateBar(OWNER, id, elapsed, totalTime) end
+
+local function onAnnounce(_, message, icon, announceType, _spellId, _modId, isSpecial)
+  if not message then return end
+  if BM.ShowWarningFromDBM then BM.ShowWarningFromDBM(isSpecial, message, icon, announceType) end
+end
+
+-- Boss kill. DOWNPORT: the source routed this to NE.alerts.BossBanner_Play — retail's kill banner,
+-- which lives in NewEra's Alerts module. This addon has no Alerts module and no NE_BossBanner
+-- frame, and DBM ships its own banner toast (DBM-BossBannerToast.lua) regardless. The routing is
+-- kept, guarded on the frame existing, so porting a banner later needs no change here.
+local function onKill(_, mod)
+  local A = NE.alerts
+  if not (A and A.BossBanner_Play and _G.NE_BossBanner) then return end
+  if A.IsBossBannerEnabled and not A.IsBossBannerEnabled() then return end
+  local name = (mod and mod.combatInfo and mod.combatInfo.name) or "Boss"
+  A.BossBanner_Play(_G.NE_BossBanner, { name = name })
+end
+
+-- Wipe → belt: cancel anything DBM did not stop per-timer. mod:Stop() usually fires DBM_TimerStop
+-- for each started timer, but the belt keeps us clean if one is missed.
+local function onWipe(_, _mod)
+  BM.BusStopAll(OWNER)
+end
+
+-- ============================ Registration ====================================================
+
+function BM.RegisterWithDBM()
+  local dbm = _G.DBM
+  if not (dbm and type(dbm.RegisterCallback) == "function") or BM._dbmRegistered then return end
+  BM._dbmRegistered = true
+
+  -- `heard` doubles as the suppression re-assert tick: DBM never recreates its warning hosts, and
+  -- creates each bar anchor once, so a cheap re-apply per event self-heals the moment either
+  -- appears — including the large anchor, which does not exist until the first huge bar.
+  -- The re-assert runs TWICE: now, and again next frame.
+  --
+  -- Now catches everything that already exists. Next frame is the one that matters on a first pull:
+  -- this callback IS DBM's fireEvent, which runs BEFORE DBM creates the bar (DBM-Core.lua:10049),
+  -- so the bar we are being told about does not exist yet and neither does its anchor if it is the
+  -- first of the session. A zero-delay timer lands after DBT:CreateBar has returned.
+  local pendingDefer = false
+  local function deferredReassert()
+    if pendingDefer or not (C_Timer and C_Timer.After) then return end
+    pendingDefer = true
+    C_Timer.After(0, function()
+      pendingDefer = false
+      if wantSuppression() then BM.ApplyDBMSuppression() end
+    end)
+  end
+
+  local function heard(fn)
+    return function(...)
+      BM._lastBusActivity = GetTime()
+      if wantSuppression() then
+        BM.ApplyDBMSuppression()
+        deferredReassert()
+      end
+      return fn(...)
+    end
+  end
+
+  -- Install the OnShow guards before the first announce can arrive.
+  BM.HookDBMWarningHost(_G.DBMWarning)
+  BM.HookDBMWarningHost(_G.DBMSpecialWarning)
+
+  dbm:RegisterCallback("DBM_TimerStart",  heard(onTimerStart))
+  dbm:RegisterCallback("DBM_TimerBegin",  heard(onTimerStart))   -- newer cores fire this name instead
+  dbm:RegisterCallback("DBM_TimerStop",   heard(onTimerStop))
+  dbm:RegisterCallback("DBM_TimerPause",  heard(onTimerPause))
+  dbm:RegisterCallback("DBM_TimerResume", heard(onTimerResume))
+  dbm:RegisterCallback("DBM_TimerUpdate", heard(onTimerUpdate))
+  dbm:RegisterCallback("DBM_Announce",    heard(onAnnounce))
+  dbm:RegisterCallback("DBM_Kill",        heard(onKill))
+  dbm:RegisterCallback("DBM_Wipe",        heard(onWipe))
+
+  if NE.Log then NE.Log("BOSSMODS", "DBM backend registered (timers/warnings feed the New Era frames).") end
+end
+
+-- Test feed for /nebossmods test — drives the real render path with the real bus, so what it shows
+-- is exactly what a DBM timer would show. Register.lua owns the slash command.
+function BM.RunTestFeed()
+  local TEST = {
+    { "Shadow Bolt Volley",  8, "Interface\\Icons\\Spell_Shadow_ShadowBolt" },
+    { "Cleave",             14, "Interface\\Icons\\Ability_Warrior_Cleave" },
+    { "Enrage",             22, "Interface\\Icons\\Ability_Warrior_Charge" },
+    { "Berserk",            40, "Interface\\Icons\\Spell_Shadow_UnholyFrenzy" },
+  }
+  local owner = BM._testOwner or {}
+  BM._testOwner = owner
+  BM.BusStopAll(owner)
+  for i, e in ipairs(TEST) do
+    BM.BusStartBar(owner, i, e[1], e[2], e[3], false, nil)
+  end
+  if BM.ShowWarningFromDBM then
+    BM.ShowWarningFromDBM(true, "Shadow Bolt Volley incoming!", "Interface\\Icons\\Spell_Shadow_ShadowBolt", nil)
+  end
+end

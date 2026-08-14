@@ -183,3 +183,28 @@ Copied wholesale from `ReferenceAddons/NewEra/Art/EncounterJournal/` for the EJ 
 Subfolders: `Backdrops/` (37), `Lore/` (37), `Bosses/` (304), `BossesGen/` (69), 54 root
 files (chrome + ejbutton splashes). All FDID-named per the extract pipeline; provenance is
 documented in the NewEra source headers (retail CASC 12.0.5.67451 via wago.tools).
+
+---
+
+## 8. Boss Timers — `Textures/BossMods/` (2 BLPs, 4.5M)
+Copied from `ReferenceAddons/NewEra/Art/BossMods/` for the boss-timer downport
+(`modules/bossmods`). Registered by `modules/bossmods/Assets.lua`, which also inlines the
+atlas rects (the source read them from NewEra's `Generated/AtlasData.lua`, which this addon
+does not ship).
+
+| FileDataID | File (`Textures/BossMods/`) | Dimensions | Bytes | Role |
+|---|---|---|---|---|
+| 7389803 | 7389803-combattimeline.blp | 2048×2048 | 4,195,476 | rail line halves, pip, cooldown divider, icon-trail, and the deadly/pause/queued/highlight icon FX |
+| 7499559 | 7499559-damagemeters-background.blp | 512×1024 | 525,460 | Bars-view background plate (the "Background" slider; alpha 0 by default) |
+
+**Deliberately NOT copied** — the source registers two more sheets that are dead weight here:
+`7390391-combattimeline-line-break-mask` (2 KB) and `7393789-combattimeline-fx-highlight-mask`
+(17 KB). Both are MaskTextures, and `Frame:CreateMaskTexture` returns nil on 3.3.5a
+(!!!ClassicAPI declares it `Private.Void`), so neither has anything to be applied to. The rail
+ticks were already solid dashes drawn over an unbroken line rather than mask-cut gaps, and the
+icon rounding goes through `NE.tex.CropIcon` — the same substitution the Cooldown Manager port
+makes. See `modules/bossmods/PORT_PLAN.md` §C.3 and §D.
+
+The Cooldown Manager atlases this module also draws with — `UI-HUD-CoolDownManager-IconOverlay`,
+`-Bar`, `-Bar-BG`, `-Bar-Pip` (fdid 6704514) — are NOT duplicated; `modules/cooldownviewer/Assets.lua`
+already registers them and the TOC loads it first.

@@ -275,5 +275,29 @@ modules\levelup\Banner.lua
 modules\levelup\SideDisplay.lua
 modules\levelup\Register.lua
 
+# --- Boss Timers (downport of NewEra/Alerts/BossMods) — DBM-driven, opt-in ---
+# Retail's Blizzard_EncounterTimeline ("Boss Abilities": a vertical rail of ability icons sliding
+# toward now, or a Cooldown-Manager-styled bar list) + Blizzard_EncounterWarnings (three text
+# tiers). Both run on C_EncounterTimeline, which exists on no Classic-family client — so the
+# ENCOUNTER DATA comes from DBM and we are only the renderer, consuming its callbacks through one
+# internal seam (BM.Bus*). Without DBM the module never boots (requiresAddOn in Register.lua).
+# Loads after cooldownviewer: the bar rows and icon rings draw with CDM atlases that
+# modules/cooldownviewer/Assets.lua registers. See modules/bossmods/PORT_PLAN.md.
+# Load order: Assets (sheets + combattimeline rects; before any SetAtlas call) -> BossMods (the
+# settings store, anchor, bar pool, rail, and the bus) -> EventIcon (the shared icon assembly,
+# built by the rail's tracks) -> Warnings (the three tiers) -> DBMAdapter (callbacks -> bus, and
+# DBM's own bar/warning suppression; needs both renderers present) -> Register (HUD frames,
+# options, /nebossmods).
+modules\bossmods\Assets.lua
+modules\bossmods\BossMods.lua
+modules\bossmods\EventIcon.lua
+modules\bossmods\Warnings.lua
+modules\bossmods\DBMAdapter.lua
+# Each frame's own settings as a dialog beside it in edit mode — retail's shape, and the
+# Cooldown Manager's. Built from CDM's SettingsControls kit (NE.cooldownviewersettings.controls),
+# which the block above loads, and reached through NE.RegisterHUDFrame's `editorSettings` seam.
+modules\bossmods\EditorPanel.lua
+modules\bossmods\Register.lua
+
 # --- demo: Sprint-0 proof panel (owner: Core/Chrome Engineer) ---
 core\_HelloDemo.lua

@@ -163,6 +163,55 @@ function Column:Refresh()
   for _, fn in ipairs(self.refreshers) do fn() end
 end
 
+-- ── Conditional enable (`o.disabled`) ───────────────────────────────────────────────────────────
+--
+-- A predicate, re-evaluated on every Refresh: a setting that does not apply right now greys out
+-- rather than vanishing, so the page does not reflow under the cursor as a neighbouring dropdown
+-- changes. Retail does the same for its per-view settings, and NewEra's own edit-mode popup did it
+-- with `showWhen` predicates (ReferenceAddons/NewEra/Alerts/BossMods/EditModeRegister.lua) — this is
+-- that idea, kept in one place so every control gets it instead of each caller reinventing it.
+--
+-- Every existing caller is unaffected: with no `o.disabled` the gate is never installed.
+--
+-- Dimming is applied to the row AND its child frames explicitly. On 3.3.5a a parent's alpha is not
+-- dependably inherited by child frames (see modules/bossmods/PORT_PLAN.md §C.5d), so dimming the row
+-- alone can leave a slider or a dropdown trigger at full brightness inside a greyed-out row.
+local DISABLED_ALPHA = 0.4
+
+local function dim(row, on)
+  local a = on and DISABLED_ALPHA or 1
+  row:SetAlpha(a)
+  if row.GetChildren then
+    for _, kid in ipairs({ row:GetChildren() }) do
+      if kid.SetAlpha then kid:SetAlpha(a) end
+    end
+  end
+end
+
+-- `interactives` are the widgets that must stop responding — the slider, the nudge arrows, the
+-- dropdown trigger, the checkbox. Disabling them is what makes this more than a visual hint.
+function Column:_gate(o, row, interactives)
+  if type(o.disabled) ~= "function" then return end
+  local function gate()
+    local off = o.disabled() and true or false
+    if row._neDisabled == off then return end   -- idempotent: Refresh runs on every open
+    row._neDisabled = off
+    dim(row, off)
+    for _, w in ipairs(interactives) do
+      if w then
+        if off then
+          if w.Disable then w:Disable() end
+        elseif w.Enable then
+          w:Enable()
+        end
+      end
+    end
+  end
+  gate()
+  self.refreshers[#self.refreshers + 1] = gate
+  row.IsGatedOff = function() return row._neDisabled and true or false end
+end
+
 -- ── Section header ──────────────────────────────────────────────────────────────────────────────
 -- Same look as the category headers next door (a faint bar with the client's own +/- glyph), because
 -- the two tabs are the same window and a settings section that styled itself differently would read
@@ -275,6 +324,7 @@ function Column:AddCheckbox(o)
   tip(cb, o.label, o.desc)
   refresh()
   self.refreshers[#self.refreshers + 1] = refresh
+  self:_gate(o, row, { cb, row })
   row.Check, row.Label, row.Refresh = cb, label, refresh
   return row
 end
@@ -355,6 +405,7 @@ function Column:AddSlider(o)
   tip(sl, o.label, o.desc)
   refresh()
   self.refreshers[#self.refreshers + 1] = refresh
+  self:_gate(o, row, { sl, row.Left, row.Right })
   row.Slider, row.Label, row.Value, row.Refresh = sl, label, value, refresh
   return row
 end
@@ -505,6 +556,7 @@ function Column:AddCompactSlider(o)
   tip(sl, o.label, o.desc)
   refresh()
   self.refreshers[#self.refreshers + 1] = refresh
+  self:_gate(o, row, { sl, row.Left, row.Right })
   row.Slider, row.Label, row.Value, row.Refresh = sl, label, value, refresh
   return row
 end
@@ -654,6 +706,7 @@ function Column:AddDropdown(o)
   end
   refresh()
   self.refreshers[#self.refreshers + 1] = refresh
+  self:_gate(o, row, { btn })
   row.Button, row.Label, row.Refresh = btn, label, refresh
   return row
 end
