@@ -75,6 +75,12 @@ local function newRegion(kind, layer, sublevel)
   function r:SetText(t) self._text = t end
   function r:GetText() return self._text end
   function r:SetFont(path, size, flags) self._font = { path, size, flags }; return true end
+  -- GetFont, because "did the font take" is asked by GETTING rather than by trusting SetFont's
+  -- return value, which is not dependable across builds.
+  function r:GetFont()
+    if not self._font then return nil end
+    return self._font[1], self._font[2], self._font[3]
+  end
   function r:SetFontObject(o) self._fontObject = o end
   function r:SetTextColor(...) self._textColor = { ... } end
   function r:SetShadowColor(...) self._shadowColor = { ... } end
@@ -299,6 +305,10 @@ end
 
 UIParent = CreateFrame("Frame", "UIParent")
 UIParent:SetSize(1024, 768)
+
+-- The client's number font as a font OBJECT. The rail countdown reads its FACE off this rather than
+-- naming a font file, so without it here only the fallback would ever be exercised.
+NumberFontNormal = { GetFont = function() return "Fonts\\ARIALN.TTF", 14, "OUTLINE" end }
 
 -- ── other client globals ────────────────────────────────────────────────────────────────────────
 function wipe(t) for k in pairs(t) do t[k] = nil end return t end
@@ -1673,6 +1683,56 @@ end)())
 fireDBM("DBM_TimerStop", "Axis")
 finishAnimations()
 frame(0.1)
+
+section("COUNTDOWN LEGIBILITY")
+-- Reported as "the timer text is hard to read", and NOT a missing cooldown swipe — the rail has none
+-- by design, since an event's position along it IS the countdown. The number sits directly on spell
+-- art, so it wants an outline, a shadow under the outline, and a size that follows the icon it is
+-- drawn on. That last one had never been true: the track frame is a fixed 35 square and the icon is
+-- SCALED past it, so Icon Size moved the art and left the digits at 14.
+do
+  -- The countdown is the one fontstring on a track that had SetFont called on it; the spell-name
+  -- string beside it keeps its font object.
+  local function countdownText()
+    local rail
+    for _, c in ipairs(anchor._children or {}) do
+      for _, r in ipairs(c._regions or {}) do
+        if r._atlas == "combattimeline-line-right" then rail = c end
+      end
+    end
+    for _, track in ipairs(rail and rail._children or {}) do
+      if track:IsShown() then
+        for _, kid in ipairs(track._children or {}) do
+          for _, r in ipairs(kid._regions or {}) do
+            if r._font then return r end
+          end
+        end
+      end
+    end
+  end
+
+  BM.SetOpt(TL, "viewType", "timeline")
+  fireDBM("DBM_TimerStart", "Legible", "Readable", 20, "Interface\\Icons\\Spell_Fire_Fireball02",
+          "cast", 1, 1, "TestMod")
+  frame(0.1)
+  local cd = countdownText()
+  check("the countdown sets a real font rather than taking the object's", cd ~= nil)
+  check("…keeping the outline the NumberFont family carries", cd and cd._font[3] == "OUTLINE")
+  check("…and adding a shadow under it, which is what the spell art needs",
+    cd and cd._shadowOffset ~= nil)
+  local base = cd and cd._font[2]
+  check("…at a size derived from the icon, not the font object's fixed 14",
+    base and math.abs(base - 35 * 0.46) < 0.01, tostring(base))
+  BM.SetOpt(TL, "iconSize", 200)
+  frame(0.1)
+  check("…so doubling Icon Size doubles the number with it",
+    base and cd._font[2] > base * 1.9, tostring(cd and cd._font[2]))
+  BM.SetOpt(TL, "iconSize", BM.DEFAULTS[TL].iconSize)
+  frame(0.1)
+  fireDBM("DBM_TimerStop", "Legible")
+  finishAnimations()
+  frame(0.1)
+end
 
 section("TOOLTIPS")
 fireDBM("DBM_TimerStart", "Tip", "Tipped ability", 20, "Interface\\Icons\\Spell_Fire_Fireball02",

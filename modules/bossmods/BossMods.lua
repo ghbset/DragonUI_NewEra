@@ -592,15 +592,21 @@ local function makeBar()
   -- Duration (Name) text — both NumberFontNormal, LEFT-justified, per retail
   -- EncounterTimelineTimerEvent: Duration RIGHT→bar.RIGHT(-5); Name LEFT→bar.LEFT(+5),
   -- RIGHT→Duration.LEFT(-10). (timeText first so label can anchor to it.)
+  -- Both carry a shadow under the NumberFont outline, for the reason applyCountdownFont records:
+  -- these sit on the bar's own fill, which is a bright red gradient with a spark riding it.
   bar.timeText = sb:CreateFontString(nil, "OVERLAY", "NumberFontNormal")
   bar.timeText:SetJustifyH("LEFT")
   bar.timeText:SetWordWrap(false)
+  bar.timeText:SetShadowColor(0, 0, 0, 1)
+  bar.timeText:SetShadowOffset(1, -1)
   bar.timeText:SetPoint("RIGHT", sb, "RIGHT", -5, 2)
 
   bar.label = sb:CreateFontString(nil, "OVERLAY", "NumberFontNormal")
   bar.label:SetJustifyH("LEFT")
   bar.label:SetJustifyV("MIDDLE")
   bar.label:SetWordWrap(false)
+  bar.label:SetShadowColor(0, 0, 0, 1)
+  bar.label:SetShadowOffset(1, -1)
   bar.label:SetPoint("LEFT", sb, "LEFT", 5, 0)
   bar.label:SetPoint("RIGHT", bar.timeText, "LEFT", -10, 0)
 
@@ -708,6 +714,38 @@ end
 local function applyTrackScale(track, remaining)
   if not (track and track.IconContainer) then return end
   track.IconContainer:SetScale(iconScale() * growthScale(remaining))
+end
+
+-- The countdown reads over SPELL ART — the hardest background there is: busy, arbitrary, and often
+-- brightest exactly where the digits are. Two things were wrong with leaving it a bare
+-- NumberFontNormal fontstring, and neither is a missing cooldown swipe (the rail has none by design:
+-- an event's POSITION is its countdown, and a swipe over the art would be a second one).
+--
+--   * It never moved with Icon Size. The track frame is always TL_ICON square and the icon assembly
+--     is SCALED past it, so at 200% you got a 70px icon carrying the same 14px number.
+--   * A thin outline is all the NumberFont family carries. Over spell art, at this frame's effective
+--     scale, that is not enough separation on its own.
+--
+-- So the size follows the icon's drawn size, and a drop shadow goes under the outline — the same
+-- pairing Warnings.lua uses to put text over the world.
+local CD_FONT_RATIO = 0.46            -- of the drawn icon: ~16px at the default 35
+local CD_FONT_MIN, CD_FONT_MAX = 9, 40
+
+local function applyCountdownFont(track)
+  local cd = track and track.cd
+  if not cd then return end
+  local size = TL_ICON * iconScale() * CD_FONT_RATIO
+  size = math.max(CD_FONT_MIN, math.min(CD_FONT_MAX, size))
+  -- The FACE comes from the client's own number font rather than a named file: it is the narrow one
+  -- Blizzard draws cooldown digits with, and it is whatever this client actually ships.
+  local path = _G.NumberFontNormal and _G.NumberFontNormal:GetFont()
+  if path then cd:SetFont(path, size, "OUTLINE") end
+  -- Checked by GETting rather than by SetFont's return, which is not dependable across builds. A
+  -- fontstring with no font draws nothing at all, so this fallback is the difference between a
+  -- smaller countdown and no countdown.
+  if not cd:GetFont() then cd:SetFontObject("NumberFontNormal") end
+  cd:SetShadowColor(0, 0, 0, 1)
+  cd:SetShadowOffset(1, -1)
 end
 
 -- Back to rest size. Named for what it does now that the pulse is gone; every former stopPulse call
@@ -913,6 +951,7 @@ local function ensureTrack(bar)
   f.cdHost:SetFrameLevel((f.IconContainer and f.IconContainer:GetFrameLevel() or f:GetFrameLevel()) + 5)
   f.cd = f.cdHost:CreateFontString(nil, "OVERLAY", "NumberFontNormal")
   f.cd:SetPoint("CENTER", f.cdHost, "CENTER", 0, 0)
+  applyCountdownFont(f)   -- sized to the icon, outlined and shadowed; re-applied by ApplyConfig
 
   -- Spell name beside the icon (retail TrackEvent Name), shown by the Show Spell Name setting.
   f.name = f.cdHost:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
@@ -1381,6 +1420,7 @@ function BM.ApplyConfig()
     sizeBar(bar)
     if bar.track then
       if bar.track.IconContainer then bar.track.IconContainer:SetScale(sc) end
+      applyCountdownFont(bar.track)   -- the number follows Icon Size with the icon
       layoutTrail(bar.track)   -- Orientation / Icon Direction move which side it streaks from
       setShown(bar.track.cd, cfg("showTimer") ~= false)
       if bar.track.name then

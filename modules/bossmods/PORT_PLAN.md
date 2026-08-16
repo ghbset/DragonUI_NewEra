@@ -32,9 +32,11 @@ world-buff alert — vanished entirely, hidden by us and reported by nobody (§C
 the Bars view never drew the background plate its own art was shipped for (§C.5o), and "In combat
 only" does not key on combat (§C.5p — the behaviour is right, the label was not). One correction:
 §C.5j's second cause was an invention — DBM creates its bar before it fires, not after — which the
-harness had been written to agree with.
+harness had been written to agree with. And one thing reported from the screen rather than the
+source: the rail countdown was hard to read, which was never the missing swipe it looked like
+(§C.5q).
 
-`qa/offline/test_bossmods.lua` passes (186 assertions): load order, the DBM gate, the settings store,
+`qa/offline/test_bossmods.lua` passes (191 assertions): load order, the DBM gate, the settings store,
 boot and editor registration, suppression across BOTH bar anchors, the timer feed with the installed
 fork's exact payload, pause/resume, the animation-release cycle through both renderers, **that
 railed events, queued events and warnings are all actually visible once their fades end**, warning
@@ -45,7 +47,7 @@ diagnostic, both rail orientations and both icon directions, the imminent grow, 
 option list, the view-specific gating, Revert vs Reset, and per-tier editing), the slash command,
 and — since the review pass — DBT's own book-keeping under suppression, the last-second blink, the
 release of the last bar of a fight, the adoption of callback-less bars (and the ordinary timers it
-must leave alone), and the Bars-view plate.
+must leave alone), the Bars-view plate, and the countdown font (§C.5q).
 
 Mutation checks confirm it bites. Each of these, applied alone, fails the harness: the source's
 `DBM.Bars` lookup, the `SetScaleFrom`/`SetScaleTo` polyfill, the §C.5b Stop guards, either half of
@@ -54,8 +56,9 @@ the §C.5c end-state handling, the §C.5d child-frame restore, the glow's clear-
 visible bars or `keep` bars, dropping §C.5m's mid-fade count or its timeout belt, flattening the
 §C.5h blink or skipping the alpha it restores before releasing a pooled glow, disabling §C.5n's
 adoption, making it synchronous, or dropping either its cancel hook or its handback, any of the four
-things §C.5o's plate does, and — in the harness — ticking OnUpdate on hidden frames, firing DBM's
-callback before its bar, or letting `hooksecurefunc` be the no-op stub it used to be. Those last
+things §C.5o's plate does, any of the four things §C.5q's countdown font does, and — in the harness
+— ticking OnUpdate on hidden frames, firing DBM's callback before its bar, or letting
+`hooksecurefunc` be the no-op stub it used to be. Those last
 three are the MODEL rather than the module, and they are checked because a harness that gets any of
 them wrong makes §C.5l, §C.5j or §C.5n untestable — which is precisely what happened the first time.
 `qa/staticcheck.sh` PASSes with the TOC block in.
@@ -606,6 +609,25 @@ in `refreshDriver`'s test and swept in `_OnUpdate`, which force-releases anythin
 one second — a fade that fails to report back cannot pin the frame up or hold a bar out of the pool.
 `endFinish` refuses a second pass, because a bar released twice is a bar pooled twice, and the next
 two events would then be handed the same track to draw on.
+
+### C.5q The countdown was hard to read, and it was not a missing swipe
+
+Owner, in game. Worth recording what it was NOT: the rail draws no cooldown swipe, deliberately —
+an event's position along the rail is its countdown, and a swipe over the icon would be a second one
+saying the same thing. The number was simply an unhelped fontstring on top of spell art, which is
+the worst background there is: busy, arbitrary, and often brightest exactly where the digits are.
+
+Two things wrong with `NumberFontNormal` as it stood. It is 14px **fixed**, and the track frame is
+always `TL_ICON` square with the icon assembly SCALED past it — so Icon Size moved the art and left
+the digits behind, giving a 70px icon with a 14px number at 200%. And the outline the NumberFont
+family carries is thin; on spell art, at this frame's effective scale, it is not enough on its own.
+
+The size now derives from the drawn icon (`CD_FONT_RATIO` of `TL_ICON * iconScale()`, clamped), and
+a drop shadow goes under the outline — the pairing `Warnings.lua` already uses for text over the
+world. The FACE is read off the client's own `NumberFontNormal` rather than naming a file, so it
+stays whatever narrow font this client ships for cooldown digits, and whether it took is checked by
+`GetFont` rather than by `SetFont`'s return, which is not dependable across builds. The Bars view's
+two strings get the shadow too: they sit on a bright red fill with a spark riding it.
 
 ### C.5n The bars DBM draws without telling anyone
 
