@@ -58,7 +58,7 @@ local TL_GROW        = 1.35      -- how much larger an event is drawn at the mom
 -- than a second thing to notice. Driven per tick as a pure function of remaining time, for the
 -- reason §C.5h gives for the swell.
 local TL_URGENT      = 1         -- s remaining at which the glow starts blinking
-local FLASH_HZ       = 6         -- blinks per second inside that window
+local FLASH_HZ       = 4         -- blinks per second inside that window
 -- Tick dashes: solid horizontal marks crossing the rail at 1/3/5/7/9/11s — the line stays
 -- CONTINUOUS and ticks are drawn on top, not cut into it. (This is why neither mask sheet is
 -- shipped: the dashes were never a mask in the first place.)

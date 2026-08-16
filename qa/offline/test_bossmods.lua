@@ -1381,8 +1381,8 @@ frame(0.1)
 check("at three seconds out the glow is up and at full strength", glowAlpha() == 1, tostring(glowAlpha()))
 
 frame(2.6)   -- ~0.8s to go: inside the last second
--- Sampling across the wave has to catch it both lit and dimmed, or it is not blinking. FLASH_HZ is
--- 6, so samples a sixteenth of a second apart land either side of an edge.
+-- Sampling across the wave has to catch it both lit and dimmed, or it is not blinking. Eight
+-- samples spanning about half a second cover more than one full cycle at any sane FLASH_HZ.
 check("inside the last second that same glow blinks", (function()
   local lit, dim = false, false
   for _ = 1, 8 do
