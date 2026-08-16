@@ -314,7 +314,17 @@ local function runDeferred()
   for _, fn in ipairs(queue) do fn() end
 end
 tinsert, tremove = table.insert, table.remove
-function hooksecurefunc() end
+-- The real thing, not a stub: a POST-hook that leaves the original in place and passes it the same
+-- arguments. The adapter puts one on DBT's own CreateBar to notice the bars DBM draws without
+-- firing anything, so a hooksecurefunc that quietly did nothing would make that untestable.
+function hooksecurefunc(tbl, name, fn)
+  local orig = tbl[name]
+  tbl[name] = function(...)
+    local returned = { orig(...) }
+    fn(...)
+    return unpack(returned)
+  end
+end
 local printed = {}
 
 function print(...) printed[#printed+1] = table.concat({ ... }, " ") end
@@ -531,10 +541,11 @@ local function dbtCancel(bar)
   end
 end
 
-local function addDBTBar(huge, dur, keep)
+local function addDBTBar(huge, dur, keep, id, icon)
   if DBT.numBars >= 15 then return nil end          -- DBT.lua:294
   dbtBarCount = dbtBarCount + 1
-  local bar = { timer = dur or 20, totalTime = dur or 20, lastUpdate = GetTime(), keep = keep }
+  local bar = { timer = dur or 20, totalTime = dur or 20, lastUpdate = GetTime(), keep = keep,
+                id = id, icon = icon }
   bar.frame = CreateFrame("Frame", "DBT_Bar_" .. dbtBarCount, smallBarsAnchor)
   if huge then bar.frame:SetPoint("TOP", largeBarsAnchor, "TOP", 0, 0) end   -- re-point, not reparent
   bar.Cancel = dbtCancel
@@ -549,12 +560,24 @@ local function addDBTBar(huge, dur, keep)
   return bar
 end
 
+-- The public entry points, in DBT's own argument order (DBT.lua CreateBar / CancelBar). Everything
+-- that draws a DBM bar goes through CreateBar — timers with a callback behind them and the handful
+-- of things DBM draws directly with none — so it is the one place the adapter can see both.
+function DBT:CreateBar(timer, id, icon, huge)
+  return addDBTBar(huge, timer, nil, id, icon)
+end
+function DBT:CancelBar(id)
+  for i = #dbtBars, 1, -1 do
+    if dbtBars[i].id == id then dbtCancel(dbtBars[i]) return end
+  end
+end
+
 -- What DBM actually does on a timer: create the bar FIRST (DBM-Core.lua:10007), give up entirely if
 -- DBT refuses — `if not bar then return false, "error" end` (:10008-10010) — and only then fire the
 -- callback (:10049). An earlier version of this harness had it the other way round, which is what
 -- made a deferred suppression pass look load-bearing when the bar had in fact been there all along.
 local function fireDBMTimer(id, msg, dur, icon, spellId, huge)
-  local bar = addDBTBar(huge, dur)
+  local bar = DBT:CreateBar(dur, id, icon, huge)
   if not bar then return nil end
   fireDBM("DBM_TimerStart", id, msg, dur, icon or "Interface\\Icons\\Spell_Fire_Fireball02",
           "cast", spellId, 1, "TestMod")
@@ -650,6 +673,24 @@ check("…and the pause/resume verbs BigWigs has no equivalent for",
   dbmCallbacks["DBM_TimerPause"] ~= nil and dbmCallbacks["DBM_TimerResume"] ~= nil)
 check("an options section registered", #optionSections == 1 and optionSections[1].id == "bossmods")
 
+-- Shared helpers, defined here because every section below uses them.
+local anchor = BM.GetAnchor()
+
+-- Run every playing group to completion, as the client does at the end of a fade. This is the path
+-- that releases a bar, and the one that crashed the client — see the note on ag:Stop above.
+local function finishAnimations()
+  for _, f in ipairs(allFrames) do
+    for _, ag in ipairs(f._animGroups or {}) do
+      if ag._playing then ag:Finish() end
+    end
+    for _, r in ipairs(f._regions or {}) do
+      for _, ag in ipairs(r._animGroups or {}) do
+        if ag._playing then ag:Finish() end
+      end
+    end
+  end
+end
+
 -- ── suppression (the rewritten half) ────────────────────────────────────────────────────────────
 
 section("SUPPRESSION")
@@ -665,10 +706,12 @@ check("nothing of DBM's is suppressed before a single bar has existed",
 -- callback and ONE synchronous pass does it.
 fireDBMTimer("Sup1", "First of the pull", 20)
 check("the first timer of the session hides the anchor synchronously", not smallBarsAnchor:IsShown())
-check("…with nothing left queued for a later frame", #deferred == 0,
-  "a deferred re-assert would only be papering over a discovery that already worked")
+-- Synchronously is the whole claim: suppression must be settled by the time this callback returns,
+-- with nothing owed to a later frame. (The deferred queue is not empty — the adoption pass below
+-- uses it, for a question that genuinely cannot be answered until the frame ends — so the honest
+-- test is that draining it changes nothing here.)
 runDeferred()
-check("…and draining the (empty) deferred queue changes nothing", not smallBarsAnchor:IsShown())
+check("…and running whatever the frame deferred changes nothing about it", not smallBarsAnchor:IsShown())
 -- DBM's warning ICONS are inline |T..|t escapes inside its own font strings (DBM-Core.lua:8121-27),
 -- not textures — so nothing about them can be suppressed except by taking the host off screen. It
 -- re-Shows the host on every announce and drives font alpha on a ticker, so alpha lost that race:
@@ -816,6 +859,100 @@ for _, f in ipairs(allFrames) do
 end
 frame(0.1)
 
+-- ── the bars DBM draws without telling anyone ───────────────────────────────────────────────────
+
+section("ORPHAN DBT BARS")
+-- Several of DBM's own bars go straight to DBT:CreateBar and fire no callback: the pizza timer
+-- (DBM-Core.lua:1806 — `/dbm timer`, and every custom timer a raid leader broadcasts that is not a
+-- pull or a break) and the world-buff alert (:4217). With DBM's bars hidden and no event to hear,
+-- they simply disappeared. Taking over DBM's bar display means taking over all of it.
+local function shownText(s)
+  for _, f in ipairs(allFrames) do
+    if f.IsVisible and f:IsVisible() then
+      for _, r in ipairs(f._regions or {}) do
+        if r:IsShown() and r._text == s then return true end
+      end
+    end
+  end
+  return false
+end
+
+DBT:CreateBar(30, "Loot in 5", "Interface\\Icons\\Spell_Holy_BorrowedTime")
+check("a bar DBM drew with no callback is not adopted before the frame is out",
+  not BM.BusHasBar(BM.DBM_OWNER, "Loot in 5"),
+  "adopted synchronously, which cannot tell an orphan from an ordinary timer")
+runDeferred()
+check("…and is adopted once the frame ends with no callback having claimed it",
+  BM.BusHasBar(BM.DBM_OWNER, "Loot in 5"))
+
+-- The other half: an ordinary timer goes through the SAME CreateBar, so the pass has to leave it
+-- alone. Adopting it would overwrite its label with DBM's internal timer id.
+BM.SetOpt(TL, "viewType", "bars")
+fireDBMTimer("Timer_cd12345", "Shadow Bolt Volley", 20)
+runDeferred()
+frame(0.1)
+check("an ordinary timer keeps the text DBM sent, not the id its bar was named with",
+  shownText("Shadow Bolt Volley") and not shownText("Timer_cd12345"))
+
+DBT:CancelBar("Loot in 5")
+check("DBM cancelling an adopted bar stops ours with it",
+  not BM.BusHasBar(BM.DBM_OWNER, "Loot in 5"))
+
+-- Adoption is suppression's job, not a feature of its own: with DBM drawing its own bars again,
+-- adopting one IS the double-draw.
+BM.SetSuppressionEnabled(false)
+DBT:CreateBar(30, "DBM draws this one", "icon")
+runDeferred()
+check("with suppression off nothing is adopted — DBM has it",
+  not BM.BusHasBar(BM.DBM_OWNER, "DBM draws this one"))
+BM.SetSuppressionEnabled(true)
+
+DBT:CreateBar(30, "Handback", "icon")
+runDeferred()
+check("…and one adopted while it was on is handed back when it goes off", (function()
+  if not BM.BusHasBar(BM.DBM_OWNER, "Handback") then return false end
+  BM.SetSuppressionEnabled(false)
+  local gone = not BM.BusHasBar(BM.DBM_OWNER, "Handback")
+  BM.SetSuppressionEnabled(true)
+  return gone
+end)())
+
+BM.BusStopAll(BM.DBM_OWNER)
+for _, f in ipairs(allFrames) do
+  for _, ag in ipairs(f._animGroups or {}) do if ag._playing then ag:Finish() end end
+end
+frame(0.1)
+for i = #dbtBars, 1, -1 do dbtCancel(dbtBars[i]) end
+
+-- ── the Bars view's backing plate ───────────────────────────────────────────────────────────────
+
+section("BARS-VIEW BACKGROUND")
+-- The source shipped `damagemeters-background` and described it as exactly this, then never drew
+-- it: Background moved the rail's shadow plate and did nothing at all in Bars view.
+BM.SetOpt(TL, "background", 60)
+fireDBM("DBM_TimerStart", "Plate1", "One", 20, "icon", "cast", 1, 1, "TestMod")
+fireDBM("DBM_TimerStart", "Plate2", "Two", 25, "icon", "cast", 1, 1, "TestMod")
+frame(0.1)
+local plate = anchor.barsPlate
+check("the bars view draws a backing plate", plate ~= nil and plate:IsShown())
+check("…from the sheet that was shipped for it and never used",
+  plate._atlas == "damagemeters-background", tostring(plate._atlas))
+check("…at the Background slider's alpha, so the slider means something in this view too",
+  math.abs((plate:GetAlpha() or 0) - 0.6) < 0.001, tostring(plate:GetAlpha()))
+check("…and covers BOTH rows, which stack below the anchor and out of it",
+  (plate:GetHeight() or 0) > 2 * 28, tostring(plate:GetHeight()))
+
+BM.SetOpt(TL, "viewType", "timeline")
+frame(0.1)
+check("…and goes away with the view", not plate:IsShown())
+
+fireDBM("DBM_TimerStop", "Plate1")
+fireDBM("DBM_TimerStop", "Plate2")
+finishAnimations()
+frame(0.1)
+check("…as it does when the last row goes", not plate:IsShown())
+BM.SetOpt(TL, "background", BM.DEFAULTS[TL].background)
+
 -- ── the timer feed ──────────────────────────────────────────────────────────────────────────────
 
 section("TIMER FEED (DBM_TimerStart)")
@@ -823,7 +960,6 @@ section("TIMER FEED (DBM_TimerStart)")
 -- keep, fade, name, guid — and NOTHING after it.
 fireDBM("DBM_TimerStart", "Timer1", "Shadow Bolt Volley", 10, "Interface\\Icons\\Spell_Shadow_ShadowBolt",
         "cast", 12345, 1, "TestMod", nil, nil, "Shadow Bolt Volley", nil)
-local anchor = BM.GetAnchor()
 check("a timer produces one live bar", BM._testCount ~= nil or anchor:IsShown())
 
 -- Reach the live list through the bus rather than an internal: stopping a key that exists is the
@@ -967,20 +1103,6 @@ frame(1.0)
 check("…and resuming lets them run again", countdowns() ~= pausedBefore,
   pausedBefore .. " -> " .. countdowns())
 
--- Run every playing group to completion, as the client does at the end of a fade. This is the path
--- that releases a bar, and the one that crashed the client — see the note on ag:Stop above.
-local function finishAnimations()
-  for _, f in ipairs(allFrames) do
-    for _, ag in ipairs(f._animGroups or {}) do
-      if ag._playing then ag:Finish() end
-    end
-    for _, r in ipairs(f._regions or {}) do
-      for _, ag in ipairs(r._animGroups or {}) do
-        if ag._playing then ag:Finish() end
-      end
-    end
-  end
-end
 
 section("STOP AND EXPIRY")
 drainLog()

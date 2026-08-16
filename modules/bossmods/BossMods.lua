@@ -458,10 +458,40 @@ local function ensureAnchor()
     pcall(NE.FrameUtil.PinPixelPerfect, anchor)
   end
 
+  -- The Bars view's backing plate, and the other half of the Background slider.
+  --
+  -- DOWNPORT-adjacent: the source shipped `damagemeters-background` and described it as exactly this
+  -- — then never drew it, so Background moved the rail's shadow plate and did nothing at all in Bars
+  -- view. Same art and the same slider, now actually behind the rows. Sized in layoutBarsPlate,
+  -- because the rows stack DOWN out of the anchor and their extent is only known after a relayout.
+  anchor.barsPlate = anchor:CreateTexture(nil, "BACKGROUND")
+  setAtlas(anchor.barsPlate, "damagemeters-background")
+  anchor.barsPlate:Hide()
+
   anchor:SetScript("OnUpdate", function() BM._OnUpdate() end)
   updateAnchorSize()   -- size to the active view (Timeline → narrow/tall, so the handle is vertical)
   anchor:Hide()        -- shown by refreshDriver when work exists
   return anchor
+end
+
+-- Cover the stacked rows, plus a small margin. Retail ships Background at 0, so by default this is
+-- an invisible texture that costs one SetSize per relayout.
+local PLATE_INSET = 6
+local function layoutBarsPlate()
+  local plate = anchor and anchor.barsPlate
+  if not plate then return end
+  if BM.viewMode ~= "bars" or #list == 0 then plate:Hide() return end
+  local gap = cfg("padding") or ROW_GAP
+  local w, h = 0, 0
+  for i, bar in ipairs(list) do
+    w = math.max(w, bar:GetWidth() or ROW_W)
+    h = h + (bar:GetHeight() or ROW_H) + (i > 1 and gap or 0)
+  end
+  plate:ClearAllPoints()
+  plate:SetPoint("TOPLEFT", anchor, "TOPLEFT", -PLATE_INSET, PLATE_INSET)
+  plate:SetSize(w + PLATE_INSET * 2, h + PLATE_INSET * 2)
+  plate:SetAlpha((cfg("background") or 0) / 100)
+  plate:Show()
 end
 
 -- Size the movable anchor to the ACTIVE view's footprint so its editor drag handle matches what is
@@ -969,7 +999,9 @@ end
 -- Bars-view layout: sort by remaining time (ascending) + stack downward. (Timeline view positions
 -- by time in _OnUpdate, so it skips stacking.)
 local function relayout()
-  if BM.viewMode == "timeline" then return end
+  -- Both exits go through layoutBarsPlate: on the timeline it is the call that takes the plate off
+  -- screen after a view swap, and in Bars view the row extent it needs is only settled below.
+  if BM.viewMode == "timeline" then layoutBarsPlate() return end
   local gap = cfg("padding") or ROW_GAP
   table.sort(list, function(a, b) return (a._endTime or 0) < (b._endTime or 0) end)
   local y = 0                                  -- accumulate per-row heights (rows vary with Icon Size)
@@ -978,6 +1010,7 @@ local function relayout()
     bar:SetPoint("TOPLEFT", anchor, "TOPLEFT", 0, -y)
     y = y + (bar:GetHeight() or ROW_H) + gap
   end
+  layoutBarsPlate()
 end
 
 -- Queue layout (retail's Sorted "Queued" track). buf = the timeline bars currently beyond the
@@ -1240,6 +1273,12 @@ local function findBar(owner, key)
   return m and key ~= nil and m[key] or nil
 end
 
+-- Does the bus already know this event? The DBM adapter asks before adopting a bar DBM drew without
+-- telling anyone, so the ones it DID tell us about are not drawn twice.
+function BM.BusHasBar(owner, key)
+  return findBar(owner, key) ~= nil
+end
+
 function BM.BusStopBar(owner, key)
   local bar = findBar(owner, key)
   if not bar then return end
@@ -1334,6 +1373,8 @@ function BM.ApplyConfig()
   if rail then layoutRail() end          -- re-point the rail line/pip for the current Length
   anchor:SetAlpha((cfg("opacity") or 100) / 100)
   BM.Repin()   -- Scale (retail's OverallSize), re-pinned rather than a bare SetScale
+  -- Background drives one plate per view: the rail's shadow, or the bars' backing (the latter also
+  -- re-alpha'd by layoutBarsPlate, which relayout below reaches).
   if rail and rail.plate then rail.plate:SetAlpha((cfg("background") or 0) / 100) end
   local sc = iconScale()
   for _, bar in ipairs(list) do

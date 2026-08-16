@@ -240,6 +240,85 @@ local function setReaperRunning(on)
   reaper:Show()
 end
 
+-- ============================ Bars DBM draws without telling anyone ==========================
+--
+-- Not every DBT bar comes from a timer object. Several of DBM's own call `DBT:CreateBar` directly
+-- and fire no callback at all:
+--
+--     DBM-Core.lua:1806   the pizza timer — `/dbm timer`, and every custom timer a raid leader
+--                         broadcasts that is not a pull or a break (those two do use real timers)
+--     DBM-Core.lua:4217   the world-buff alert
+--
+-- With DBM's bars hidden and no event to hear, those simply vanished — a raid leader's "loot in 5"
+-- disappearing is a worse outcome than the double-draw suppression exists to prevent. Taking over
+-- DBM's bar display means taking over all of it, so we adopt the orphans: hook CreateBar, and if no
+-- callback has claimed that id by the end of the frame, start it on the bus ourselves.
+--
+-- The deferral is genuinely needed here, and it is the mirror image of the one §C.5j wrongly added.
+-- CreateBar returns BEFORE the fireEvent (DBM-Core.lua:10007 then :10049), so at hook time an
+-- ordinary boss timer looks exactly like an orphan. One frame later the difference is settled.
+--
+-- Only while we are actually suppressing: with DBM drawing its own bars, adopting one is the
+-- double-draw.
+
+local adopted = {}                                 -- dbt bar id -> true, the ones we took over
+local pendingAdoptions, adoptionScheduled = {}, false
+
+-- Hand them all back. Turning suppression off makes DBT's own bars visible again, and an adopted
+-- copy of one would be the double-draw this module exists to avoid.
+local function releaseAdoptions()
+  wipe(pendingAdoptions)
+  for id in pairs(adopted) do BM.BusStopBar(OWNER, id) end
+  wipe(adopted)
+end
+
+local function resolveAdoptions()
+  adoptionScheduled = false
+  local queued = pendingAdoptions
+  pendingAdoptions = {}
+  for _, entry in ipairs(queued) do
+    if wantSuppression() and not BM.BusHasBar(OWNER, entry.id) then
+      -- The id IS the display text for these: DBT names its bar by it, and a pizza timer's id is
+      -- the message the raid leader typed.
+      BM.BusStartBar(OWNER, entry.id, tostring(entry.id), entry.timer, entry.icon)
+      adopted[entry.id] = true
+    end
+  end
+end
+
+local function onDBTCreateBar(_, timer, id, icon)
+  if id == nil or type(timer) ~= "number" or timer <= 0 then return end
+  -- An early-out, not the guard: resolveAdoptions asks again a frame later, which is where the
+  -- decision actually has to be made (suppression can be switched off in between). This one only
+  -- saves a table and a timer per bar for anyone running with suppression off.
+  if not wantSuppression() then return end
+  pendingAdoptions[#pendingAdoptions + 1] = { id = id, timer = timer, icon = icon }
+  if adoptionScheduled or not (C_Timer and C_Timer.After) then return end
+  adoptionScheduled = true
+  C_Timer.After(0, resolveAdoptions)
+end
+
+-- DBM cancels these by id and fires nothing, same as it created them (e.g. `/dbm timer 0`,
+-- DBM-Core.lua:1795). Harmless for a normal timer: DBM_TimerStop has already emptied that key, so
+-- the second stop finds nothing.
+local function onDBTCancelBar(_, id)
+  if id ~= nil and adopted[id] then
+    adopted[id] = nil
+    BM.BusStopBar(OWNER, id)
+  end
+end
+
+local hookedDBT = false
+local function hookDBT()
+  if hookedDBT then return end
+  local dbt = _G.DBT
+  if not (dbt and type(dbt.CreateBar) == "function" and hooksecurefunc) then return end
+  hookedDBT = true
+  -- Post-hooks, so DBT's own work is untouched and we only read what it was asked for.
+  hooksecurefunc(dbt, "CreateBar", onDBTCreateBar)
+  if type(dbt.CancelBar) == "function" then hooksecurefunc(dbt, "CancelBar", onDBTCancelBar) end
+end
+
 -- Re-evaluate the whole suppression state (boot + option toggle + per-event re-assert).
 function BM.ApplyDBMSuppression()
   local Mods = NE.modules
@@ -261,6 +340,8 @@ function BM.ApplyDBMSuppression()
   -- callback would only ever run AFTER DBM had already tried to make its bar (DBM-Core.lua:10007),
   -- so it could not free the slot that call needed; the point is to have the slots free already.
   setReaperRunning(barsOn)
+  -- Installed here rather than at boot: DBT may load after us, and this is cheap and idempotent.
+  if barsOn then hookDBT() end
 end
 
 -- DBM shows its warning hosts itself on every announce, so hiding one is only half the job: without
@@ -280,8 +361,10 @@ end
 
 -- Hand every suppressed frame back before we stop asserting (module turned off mid-session).
 function BM.ClearDBMSuppression()
-  -- Nothing is frozen once the anchors are back, so DBT drives its own bars again.
+  -- Nothing is frozen once the anchors are back, so DBT drives its own bars again — and draws the
+  -- ones we had been drawing on its behalf.
   setReaperRunning(false)
+  releaseAdoptions()
   -- Snapshot and clear BEFORE restoring, for the reason setSuppressed records: the OnShow guard
   -- reads `suppressed`, so a Show() with the flag still set is undone the instant it happens.
   local pending = {}

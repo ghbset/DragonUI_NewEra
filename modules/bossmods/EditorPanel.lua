@@ -45,7 +45,9 @@ local SIDE_GAP  = 12
 
 -- Left element of each pair is the STORED value and must stay English; only the right is shown.
 local VIEW_TYPE   = { { "timeline", L["Timeline (rail)"] }, { "bars", L["Bars"] } }
-local VISIBILITY  = { { "incombat", L["In combat only"] }, { "always", L["Always"] } }
+-- "incombat" is retail's stored name for it; the label says what it actually keys on, which is
+-- whether there are timers rather than the combat flag (see Register.lua).
+local VISIBILITY  = { { "incombat", L["Only while timers are running"] }, { "always", L["Always"] } }
 local ORIENTATION = { { "vertical", L["Vertical"] }, { "horizontal", L["Horizontal"] } }
 local DIRECTION   = { { "right", L["Down / Right"] }, { "left", L["Up / Left"] } }
 local TOOLTIPS    = { { "cursor", L["At the cursor"] }, { "default", L["Beside the frame"] },
@@ -259,6 +261,9 @@ local function buildPage(frameID)
     })
     col:AddDropdown({
       label = L["Show the frame"], values = VISIBILITY,
+      desc  = L["DBM raises a timer a little before a pull and for a few things outside combat — a "
+              .. "queue, a break, a raid leader's own timer — so this follows the timers rather "
+              .. "than your combat flag."],
       get = getter("visibility"), set = set("visibility"),
     })
     -- Ranges match NewEra's own popup (EditModeRegister.lua buildTimelineOptions) so a player who

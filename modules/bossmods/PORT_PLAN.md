@@ -24,13 +24,17 @@ says it will** — and the fourth is art that only a mask can make sense of. The
 done by LibCustomGlow's ButtonGlow, held for the whole imminent window (§C.5e). The offline harness models
 all of it, and `/nebossmods debug`, the dump that found the last three, is part of the module.
 
-**Three later corrections, all on the DBM side of the seam, all found by re-reading the installed
-DBM rather than by playing**: hiding DBM's bars stopped DBM *making* them after fifteen timers and
-took our own feed down with it (§C.5l); the last event of every fight leaked its frame and never
-played its finish (§C.5m); and §C.5j's second cause was an invention — DBM creates its bar before it
-fires, not after — which the harness had been written to agree with (§C.5j, corrected).
+**A later review pass, all of it found by re-reading the installed DBM rather than by playing.**
+Three faults: hiding DBM's bars stopped DBM *making* them after fifteen timers and took our own feed
+down with it (§C.5l); the last event of every fight leaked its frame and never played its finish
+(§C.5m); and the bars DBM draws with no callback behind them — a raid leader's pizza timer, the
+world-buff alert — vanished entirely, hidden by us and reported by nobody (§C.5n). Two omissions:
+the Bars view never drew the background plate its own art was shipped for (§C.5o), and "In combat
+only" does not key on combat (§C.5p — the behaviour is right, the label was not). One correction:
+§C.5j's second cause was an invention — DBM creates its bar before it fires, not after — which the
+harness had been written to agree with.
 
-`qa/offline/test_bossmods.lua` passes (175 assertions): load order, the DBM gate, the settings store,
+`qa/offline/test_bossmods.lua` passes (186 assertions): load order, the DBM gate, the settings store,
 boot and editor registration, suppression across BOTH bar anchors, the timer feed with the installed
 fork's exact payload, pause/resume, the animation-release cycle through both renderers, **that
 railed events, queued events and warnings are all actually visible once their fades end**, warning
@@ -39,18 +43,21 @@ no icon while the glow ring still is), the imminent glow's full lifecycle across
 diagnostic, both rail orientations and both icon directions, the imminent grow, hover tooltips
 (including the non-spell fallback), the bar flip, the edit-mode dialog (coverage against NewEra's own
 option list, the view-specific gating, Revert vs Reset, and per-tier editing), the slash command,
-and — since §C.5l/m — DBT's own book-keeping under suppression, the last-second blink, and the
-release of the last bar of a fight.
+and — since the review pass — DBT's own book-keeping under suppression, the last-second blink, the
+release of the last bar of a fight, the adoption of callback-less bars (and the ordinary timers it
+must leave alone), and the Bars-view plate.
 
 Mutation checks confirm it bites. Each of these, applied alone, fails the harness: the source's
 `DBM.Bars` lookup, the `SetScaleFrom`/`SetScaleTo` polyfill, the §C.5b Stop guards, either half of
 the §C.5c end-state handling, the §C.5d child-frame restore, the glow's clear-on-release, pinning
 `isVertical()` back to true, disabling §C.5l's reaper (the sweep or its ticker), letting it touch
 visible bars or `keep` bars, dropping §C.5m's mid-fade count or its timeout belt, flattening the
-§C.5h blink or skipping the alpha it restores before releasing a pooled glow, and — in the harness —
-ticking OnUpdate on hidden frames, or firing DBM's callback before its bar. Those last two are the
-MODEL rather than the module, and they are checked because a harness that gets either wrong makes
-§C.5l and §C.5j untestable, which is precisely what happened the first time.
+§C.5h blink or skipping the alpha it restores before releasing a pooled glow, disabling §C.5n's
+adoption, making it synchronous, or dropping either its cancel hook or its handback, any of the four
+things §C.5o's plate does, and — in the harness — ticking OnUpdate on hidden frames, firing DBM's
+callback before its bar, or letting `hooksecurefunc` be the no-op stub it used to be. Those last
+three are the MODEL rather than the module, and they are checked because a harness that gets any of
+them wrong makes §C.5l, §C.5j or §C.5n untestable — which is precisely what happened the first time.
 `qa/staticcheck.sh` PASSes with the TOC block in.
 
 **Four lessons worth keeping**, each paid for the same way:
@@ -600,6 +607,41 @@ one second — a fade that fails to report back cannot pin the frame up or hold 
 `endFinish` refuses a second pass, because a bar released twice is a bar pooled twice, and the next
 two events would then be handed the same track to draw on.
 
+### C.5n The bars DBM draws without telling anyone
+
+Not every DBT bar comes from a timer object. Two of DBM's own go straight to `DBT:CreateBar` and
+fire no callback at all — the pizza timer (`DBM-Core.lua:1806`: `/dbm timer`, and every custom timer
+a raid leader broadcasts that is not a pull or a break, both of which do use real timers) and the
+world-buff alert (`:4217`). With DBM's bars hidden and no event to hear, those simply vanished. A
+raid leader's "loot in 5" disappearing is a worse outcome than the double-draw suppression exists to
+prevent.
+
+Taking over DBM's bar display means taking over all of it, so the orphans are adopted: a post-hook
+on `DBT:CreateBar`, and if no callback has claimed that id by the end of the frame, the bar is
+started on the bus. **The deferral here is real, and is the mirror image of the one §C.5j invented**
+— because `CreateBar` returns before the `fireEvent`, an ordinary boss timer and an orphan are
+indistinguishable at hook time and can only be told apart a frame later. `DBT:CancelBar` is hooked
+too, since DBM ends these the same way it made them (`DBM-Core.lua:1795`), and adoption is released
+wholesale when suppression is turned off, where DBM drawing its own bar again would make our copy
+the double-draw.
+
+### C.5o The Bars view had no background
+
+`damagemeters-background` was shipped, registered, described in §D as "the Bars-view background
+plate (the Background slider)" — and drawn by nothing. `background` only ever reached the rail's
+shadow plate, so in Bars view the slider did nothing at all. The plate is now drawn behind the rows,
+sized to them after each relayout (they stack down out of the anchor, so their extent is not known
+before) and hidden with the view. Retail ships Background at 0, so nothing changes by default.
+
+### C.5p "In combat only" does not mean in combat
+
+`refreshDriver` keys on whether there is anything to show, never on `UnitAffectingCombat`, so the
+label was wrong on the setting's own terms. **The behaviour is right and was not changed**: a pull
+timer runs *before* combat starts, which is exactly when you want the frame, and §C.5n now
+deliberately routes queue, break and raid-leader timers through it as well. The dropdown says
+"Only while timers are running", with a tooltip explaining why that is not the same thing. The
+stored value stays `incombat`, retail's own name for the option.
+
 ### C.5k "Duplicate icons below the warning" — DBM's, after all
 
 Reported as a second pair of flanking icons below the warning, and correctly guessed to be DBM's.
@@ -654,7 +696,7 @@ From `ReferenceAddons/NewEra/Art/BossMods/` → `Textures/BossMods/`:
 | BLP | Size | Take? |
 | --- | ---: | --- |
 | `7389803-combattimeline.blp` | 4.2 MB | **Yes** — the whole rail: line halves, pip, divider, icon-trail, deadly/pause/queued/highlight FX |
-| `7499559-damagemeters-background.blp` | 513 KB | **Yes** — the Bars-view background plate (the "Background" slider) |
+| `7499559-damagemeters-background.blp` | 513 KB | **Yes** — the Bars-view background plate (the "Background" slider). Shipped from the start; not actually DRAWN until §C.5o |
 | `7390391-combattimeline-line-break-mask.blp` | 2 KB | No — masks are dead here (§C.3) |
 | `7393789-combattimeline-fx-highlight-mask.blp` | 17 KB | No — same |
 

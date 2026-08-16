@@ -251,9 +251,16 @@ NE.RegisterOptionSection({
       getFunc = get("iconDirection"), setFunc = set("iconDirection"),
     })
 
+    -- The stored value is still "incombat" (retail's "In Encounter"), but the LABEL now says what
+    -- the code does: the frame follows whether there is anything to show, not UnitAffectingCombat.
+    -- That is the right behaviour and not worth "fixing" into a literal combat check — a pull timer
+    -- runs before combat starts, which is exactly when you want to see it.
     C:AddDropdown(scroll, {
       label   = L["Show the frame"],
-      values  = { incombat = L["In combat only"], always = L["Always"] },
+      desc    = L["DBM raises a timer a little before a pull and for a few things outside combat — a "
+                .. "queue, a break, a raid leader's own timer — so this follows the timers rather "
+                .. "than your combat flag."],
+      values  = { incombat = L["Only while timers are running"], always = L["Always"] },
       getFunc = get("visibility"), setFunc = set("visibility"),
     })
 

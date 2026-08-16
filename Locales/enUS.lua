@@ -433,7 +433,10 @@ L["View"] = true
 L["Timeline (rail)"] = true
 L["Bars"] = true
 L["Show the frame"] = true
-L["In combat only"] = true
+L["Only while timers are running"] = true
+L["DBM raises a timer a little before a pull and for a few things outside combat — a "
+  .. "queue, a break, a raid leader's own timer — so this follows the timers rather "
+  .. "than your combat flag."] = true
 L["Icon size"] = true
 L["Rail length"] = true
 L["Bar width"] = true
