@@ -16,6 +16,11 @@
 --
 --   DBM_TimerStart (DBM-Core.lua:10049)
 --       id, msg, timer, icon, timerType, spellId, colorId, modId, keep, fade, name, guid
+--     * The DBT bar is created FIRST, at :10007, and the callback only fires if that succeeded
+--       (`if not bar then return false, "error" end`, :10008-10010). So the bar always exists by
+--       the time we are told about the timer — which matters twice over: suppression can act
+--       synchronously, and if DBT ever refuses to make a bar we hear nothing at all. See the
+--       reaper below, which is what keeps DBT able to make one.
 --     * DBM_TimerBegin — the modern rename the source registered FIRST — is never fired by this
 --       fork. Registering both is still correct and free: one of them simply never arrives, and a
 --       server running a newer core would send that one instead. Same id ⇒ the bus dedupes.
@@ -43,12 +48,12 @@
 --   1. It reaches the bar anchor through `DBM.Bars`, which does not exist here. The bar library is
 --      the GLOBAL `DBT` (DBM-StatusBarTimers/DBT.lua:43), with GetBarIterator at :605. Ported
 --      verbatim, findDBTAnchor would return nil forever and every bar would be drawn twice.
---   2. It assumes ONE anchor — "every DBT_Bar_N is created as a child of the one smallBarsAnchor;
---      huge bars only re-POINT to the large anchor". This fork creates BOTH anchors unnamed at
---      DBT.lua:179, and DBT.lua:852/:859 note that Simple/NoAnim bars are CREATED on the large
---      anchor rather than moved to it. So we collect every distinct parent the live bars report
---      and alpha-0 all of them, re-asserted per heard event — which also self-heals when a large
---      anchor first appears mid-fight.
+--   2. It reaches the anchor through one live bar. Both anchors are unnamed locals created at
+--      DBT.lua:179, so a bar IS the only handle — but every bar is created on smallBarsAnchor
+--      (DBT.lua:249) and is never reparented; huge bars only re-POINT to the large anchor
+--      (:663, :1120). Hiding the small anchor therefore hides every bar there is, and the
+--      largeBarsAnchor this collects will in practice never have a child. It is collected anyway:
+--      it costs one table entry, and a fork that did reparent would otherwise leak bars on screen.
 -- The warning hosts DBMWarning (DBM-Core.lua:7812) and DBMSpecialWarning (:8849) do exist under
 -- those exact global names, so those suppress exactly as the source wrote them.
 --
@@ -103,10 +108,8 @@ end
 --
 -- PRIMARY ROUTE: the bar FRAMES are named globals — `CreateFrame("Frame", "DBT_Bar_"..n, anchor)`
 -- (DBT.lua:249) — and a released bar keeps both its name and its parent, sitting in DBT's reuse pool.
--- So this finds the anchors even with nothing running, which the live-bar iterator cannot: DBM fires
--- DBM_TimerStart BEFORE it creates the bar (DBM-Core.lua:10049), so on the very first timer of a
--- pull the iterator is still empty and there is nothing to hide. That is why DBM's own bars were
--- still on screen for `/dbm test`.
+-- So this finds the anchors with nothing LIVE, which the iterator cannot — a login, or any moment
+-- between pulls, where every bar has been released back to that pool.
 --
 -- Cached across calls (anchors are created once and never replaced) and re-walked each time, so the
 -- large anchor is picked up the first time a huge bar exists.
@@ -141,6 +144,102 @@ local function wantSuppression()
   return true
 end
 
+-- ============================ Keeping DBT's books while its bars are hidden ==================
+--
+-- Hiding the anchors is what makes DBM's bars invisible, and it also FREEZES them. A frame that is
+-- not VISIBLE gets no OnUpdate, and every DBT bar's countdown IS its own OnUpdate — DBT.lua:251
+-- installs it, and `barPrototype:Update` is where a bar both ticks down and dies:
+--
+--     self.timer = self.timer - (paused and 0 or elapsed)          -- DBT.lua (Update)
+--     if timerValue <= 0 and not (barOptions.KeepBars and self.keep) then return self:Cancel() end
+--
+-- Nothing else ever expires a bar. There is no CancelAllBars anywhere in DBT, and DBM prunes an
+-- expired timer from `startedTimers` on a schedule (DBM-Core.lua:10059-10061), so a mod's
+-- combat-end Stop() does not reclaim it either. With the anchors hidden the consequences compound:
+--
+--     * DBT.numBars is decremented ONLY in Cancel (DBT.lua:969), so it never falls;
+--     * DBT:CreateBar hard-returns once numBars >= 15 (DBT.lua:294);
+--     * and DBM's Timer:Start bails on that BEFORE it fires anything —
+--       `if not bar then return false, "error" end` (DBM-Core.lua:10008-10010), with the
+--       fireEvent at :10049.
+--
+-- So after fifteen expired-but-unreaped timers DBM stops telling us about ANY timer and our own
+-- rail goes blank for the session — with DBM's own timers broken alongside it. Suppressing DBM's
+-- drawing must not stop DBM working.
+--
+-- What runs below is the accounting half of DBT's own update and nothing else: the elapsed
+-- subtraction and the expiry test, against the same `lastUpdate` clock DBT itself uses, so DBT
+-- picks up mid-stride the moment suppression is switched off. Everything skipped — the colour
+-- lerp, SetStatusBarColor, SetValue, the timer text, the enlarge animation — is drawing work for a
+-- frame nobody can see, which is also why this is CHEAPER than the alternative of parking the
+-- anchors off screen and leaving DBT running: five arithmetic operations per bar at REAP_INTERVAL,
+-- against DBT's full redraw at frame rate.
+--
+-- A VISIBLE bar is skipped outright. DBT is driving that one itself, and decrementing it here as
+-- well would run it down at double speed.
+
+local REAP_INTERVAL = 0.2
+local reaper
+
+local function reapFrozenDBTBars()
+  local dbt = _G.DBT
+  if not (dbt and dbt.GetBarIterator) then return end
+  local ok, iter, state = pcall(dbt.GetBarIterator, dbt)
+  if not ok or not iter then return end
+
+  -- Snapshot first: Cancel() writes to DBT.bars, which is what we are iterating.
+  local frozen, now = {}, GetTime()
+  pcall(function()
+    for bar in iter, state do
+      local f = bar and bar.frame
+      if f and f.IsVisible and not f:IsVisible() and not bar.dead
+         and type(bar.timer) == "number" and type(bar.lastUpdate) == "number" then
+        frozen[#frozen + 1] = bar
+      end
+    end
+  end)
+
+  local keepBars = dbt.Options and dbt.Options.KeepBars
+  for _, bar in ipairs(frozen) do
+    local elapsed = now - bar.lastUpdate
+    if elapsed > 0 then
+      bar.lastUpdate = now
+      if not bar.paused then
+        bar.timer = bar.timer - elapsed
+        -- DBT's own condition, verbatim. `keep` bars are meant to sit at zero until an explicit
+        -- stop, so reaping one would take a bar off DBM that DBM still thinks it has.
+        if bar.timer <= 0 and not (keepBars and bar.keep) and bar.Cancel then
+          pcall(bar.Cancel, bar)
+        end
+      end
+    end
+  end
+end
+BM.ReapFrozenDBTBars = reapFrozenDBTBars
+
+-- The reaper's own driver. It cannot ride the module's OnUpdate: that lives on the timeline anchor,
+-- which hides itself whenever there is nothing on the rail — precisely when DBT's leftovers need
+-- clearing. One shown 1x1 frame, throttled, running only while we are actually suppressing.
+local function setReaperRunning(on)
+  if not on then
+    if reaper then reaper:Hide() end
+    return
+  end
+  if not reaper then
+    reaper = CreateFrame("Frame", nil, UIParent)
+    reaper:SetSize(1, 1)
+    reaper:SetPoint("TOPLEFT", UIParent, "TOPLEFT", 0, 0)
+    reaper._acc = 0
+    reaper:SetScript("OnUpdate", function(self, elapsed)
+      self._acc = self._acc + (elapsed or 0)
+      if self._acc < REAP_INTERVAL then return end
+      self._acc = 0
+      reapFrozenDBTBars()
+    end)
+  end
+  reaper:Show()
+end
+
 -- Re-evaluate the whole suppression state (boot + option toggle + per-event re-assert).
 function BM.ApplyDBMSuppression()
   local Mods = NE.modules
@@ -156,10 +255,16 @@ function BM.ApplyDBMSuppression()
   BM.HookDBMWarningHost(_G.DBMSpecialWarning)
   setSuppressed(_G.DBMWarning, warningsOn, "hide")
   setSuppressed(_G.DBMSpecialWarning, warningsOn, "hide")
+
+  -- Hidden bars do not expire themselves; while we are hiding them, we do it for them. The ticker
+  -- is the whole mechanism — there is deliberately no extra pass here. Reaping from inside a
+  -- callback would only ever run AFTER DBM had already tried to make its bar (DBM-Core.lua:10007),
+  -- so it could not free the slot that call needed; the point is to have the slots free already.
+  setReaperRunning(barsOn)
 end
 
 -- DBM shows its warning hosts itself on every announce, so hiding one is only half the job: without
--- this it would reappear and stay up until the next deferred pass. The hook re-hides it in the same
+-- this it would reappear and stay up until the next DBM event. The hook re-hides it in the same
 -- frame it is shown, and is installed once per frame object.
 --
 -- HookScript, never SetScript: DBM owns these frames and may have its own OnShow. Hooking adds ours
@@ -175,6 +280,8 @@ end
 
 -- Hand every suppressed frame back before we stop asserting (module turned off mid-session).
 function BM.ClearDBMSuppression()
+  -- Nothing is frozen once the anchors are back, so DBT drives its own bars again.
+  setReaperRunning(false)
   -- Snapshot and clear BEFORE restoring, for the reason setSuppressed records: the OnShow guard
   -- reads `suppressed`, so a Show() with the flag still set is undone the instant it happens.
   local pending = {}
@@ -237,31 +344,19 @@ function BM.RegisterWithDBM()
   BM._dbmRegistered = true
 
   -- `heard` doubles as the suppression re-assert tick: DBM never recreates its warning hosts, and
-  -- creates each bar anchor once, so a cheap re-apply per event self-heals the moment either
-  -- appears — including the large anchor, which does not exist until the first huge bar.
-  -- The re-assert runs TWICE: now, and again next frame.
+  -- DBT creates its anchors once at load (DBT.lua:179), so a cheap re-apply per event self-heals
+  -- the moment either becomes reachable.
   --
-  -- Now catches everything that already exists. Next frame is the one that matters on a first pull:
-  -- this callback IS DBM's fireEvent, which runs BEFORE DBM creates the bar (DBM-Core.lua:10049),
-  -- so the bar we are being told about does not exist yet and neither does its anchor if it is the
-  -- first of the session. A zero-delay timer lands after DBT:CreateBar has returned.
-  local pendingDefer = false
-  local function deferredReassert()
-    if pendingDefer or not (C_Timer and C_Timer.After) then return end
-    pendingDefer = true
-    C_Timer.After(0, function()
-      pendingDefer = false
-      if wantSuppression() then BM.ApplyDBMSuppression() end
-    end)
-  end
-
+  -- ONE PASS, synchronously, is enough — and this is a correction. An earlier build ran a second,
+  -- zero-delay pass on the belief that our callback runs before DBM creates the bar, so the first
+  -- timer of a session had nothing to find. The order is the other way round: DBT:CreateBar is at
+  -- DBM-Core.lua:10007 and the fireEvent that reaches us is at :10049, with an early return in
+  -- between if the bar could not be made. The bar — and therefore its anchor, and therefore the
+  -- DBT_Bar_N global we discover it through — always exists by the time we are called.
   local function heard(fn)
     return function(...)
       BM._lastBusActivity = GetTime()
-      if wantSuppression() then
-        BM.ApplyDBMSuppression()
-        deferredReassert()
-      end
+      if wantSuppression() then BM.ApplyDBMSuppression() end
       return fn(...)
     end
   end

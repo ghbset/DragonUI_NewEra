@@ -52,6 +52,13 @@ local TL_ICON        = 35        -- retail TrackEvent icon size
 local TL_WINDOW      = 12        -- visible window (s) ≈ retail Short-track duration
 local TL_HIGHLIGHT   = 5         -- pip / imminent mark (retail HighlightTime = 5.0)
 local TL_GROW        = 1.35      -- how much larger an event is drawn at the moment it lands
+-- THE LAST SECOND. The swell is a smooth ramp, so there is no moment in it that says NOW; this is
+-- that moment. Nothing new is drawn for it: the proc glow that has been up since the event went
+-- imminent starts BLINKING, which is the cue the player is already watching becoming urgent rather
+-- than a second thing to notice. Driven per tick as a pure function of remaining time, for the
+-- reason §C.5h gives for the swell.
+local TL_URGENT      = 1         -- s remaining at which the glow starts blinking
+local FLASH_HZ       = 6         -- blinks per second inside that window
 -- Tick dashes: solid horizontal marks crossing the rail at 1/3/5/7/9/11s — the line stays
 -- CONTINUOUS and ticks are drawn on top, not cut into it. (This is why neither mask sheet is
 -- shipped: the dashes were never a mask in the first place.)
@@ -436,6 +443,9 @@ local activeCount = 0
 -- active[owner] = { [key] = bar }  ;  list = flat array of live bars for sort/relayout
 local active, list = {}, {}
 local pool = {}
+-- Bars that have left `list` but are still playing their finish/cancel fade. They are not live work
+-- and nothing counts them as such — but the anchor has to stay up for them. See refreshDriver.
+local finishing = {}
 
 local function ensureAnchor()
   if anchor then return anchor end
@@ -484,8 +494,13 @@ local function refreshDriver()
   if not anchor then return end
   -- Visibility setting (retail: Always / In Encounter): "always" keeps the HUD (and the empty rail)
   -- up even with no live bars; "incombat" only while there is work. The editor always shows.
+  --
+  -- `#finishing` counts as work, and has to. finishBar detaches its bar immediately, so the LAST
+  -- event of a fight drops activeCount to 0 while its fade is still playing — and an animation on a
+  -- hidden frame does not advance, so hiding here would strand it: no OnFinished, no release, the
+  -- bar never back in the pool and the last ability vanishing instead of popping.
   local always = cfg("visibility") == "always"
-  local work = activeCount > 0 or BM._editing or always
+  local work = activeCount > 0 or #finishing > 0 or BM._editing or always
   setShown(anchor, work)
   if rail then
     setShown(rail, work and BM.viewMode == "timeline")
@@ -632,10 +647,23 @@ end
 -- The imminent proc glow (EventIcon.lua's SetImminent), gated on the setting. Routed through one
 -- helper because a track is POOLED: a glow left running is inherited by whatever event recycles the
 -- frame next, which would light up an ability that is nowhere near due.
-local function setImminent(track, on)
+-- The GLOW's alpha, as a pure function of time to go: full outside the urgent window, blinking at
+-- FLASH_HZ inside it. Keyed on `remaining` rather than on GetTime, so every icon that enters the
+-- window blinks the same way and any interruption self-corrects on the next frame.
+local function flashAlpha(remaining)
+  if not remaining or remaining > TL_URGENT then return 1 end
+  return ((remaining * FLASH_HZ) % 1) < 0.5 and 1 or 0.15
+end
+
+-- `remaining` is optional: every "switch it off" caller omits it, which reads as not urgent and
+-- restores full alpha — including the release path, where a pooled frame must carry neither a live
+-- glow nor a dimmed one.
+local function setImminent(track, on, remaining)
   local ic = track and track.IconContainer
   if not (ic and ic.SetImminent) then return end
-  ic:SetImminent(on and cfg("showGlow") ~= false)
+  local want = (on and cfg("showGlow") ~= false) and true or false
+  ic:SetImminent(want)
+  if ic.SetFlash then ic:SetFlash(want and flashAlpha(remaining) or 1) end
 end
 
 -- How much larger an event is drawn, given the time left on it. 1.0 until it enters the highlight
@@ -982,26 +1010,50 @@ end
 -- cancel = it was stopped early (fade). Detaches immediately so the OnUpdate loop + counts ignore it
 -- while the fade plays; the bar/track is released on the animation's OnFinished. Preview events skip
 -- the anim (instant) so toggling the editor stays snappy.
+local FINISH_TIMEOUT = 1.0   -- s; the longest fade is 0.30
+
+-- Every route out of a fade ends here, exactly once: off the finishing list, back in the pool.
+--
+-- EXACTLY once matters. Both the animation's OnFinished and the timeout belt below can arrive, in
+-- either order, and a second pass would push the same bar into the pool twice — two entries, one
+-- frame, and eventually two live events drawing on top of each other. `_finishAt` is the token: it
+-- is set once when the fade starts and cleared here.
+local function endFinish(bar)
+  if not bar._finishAt then return end
+  for i = #finishing, 1, -1 do
+    if finishing[i] == bar then table.remove(finishing, i) break end
+  end
+  bar._finishAt, bar._finishDone = nil, nil
+  releaseBar(bar); relayout(); refreshDriver()
+end
+
 local function finishBar(bar, isCancel)
   if not bar or bar._finishing then return end
   bar._finishing = true
   detach(bar)
-  local function done() releaseBar(bar); relayout(); refreshDriver() end
-  if bar._preview then done(); return end
+  if bar._preview then releaseBar(bar); relayout(); refreshDriver(); return end
+  -- Listed BEFORE anything is played. detach() has already dropped activeCount, so on the last bar
+  -- of a fight the very next refreshDriver would hide the anchor and strand this animation
+  -- (see refreshDriver). The timestamp is the belt: _OnUpdate forces the release of anything still
+  -- here after FINISH_TIMEOUT, so a fade whose OnFinished never arrives cannot pin the frame up or
+  -- keep a bar out of the pool.
+  bar._finishAt = GetTime()
+  bar._finishDone = function() endFinish(bar) end
+  finishing[#finishing + 1] = bar
   if BM.viewMode == "timeline" and bar.track then
     local t = bar.track
     stopPulse(t)
     if isCancel then
-      t.CancelAnim._done = done
+      t.CancelAnim._done = bar._finishDone
       stopAnim(t.CancelAnim); t.CancelAnim:Play()
     else
-      t.FinishAnim._done = done
+      t.FinishAnim._done = bar._finishDone
       playTrackFinish(t)
     end
     return
   end
   local ag = isCancel and bar.CancelAnim or bar.FinishAnim
-  if ag then ag._done = done; stopAnim(ag); ag:Play() else done() end
+  if ag then ag._done = bar._finishDone; stopAnim(ag); ag:Play() else bar._finishDone() end
 end
 
 -- ============================ The driver =====================================================
@@ -1088,8 +1140,9 @@ function BM._OnUpdate()
               if t.IconContainer and t.IconContainer.PlayHighlight then t.IconContainer:PlayHighlight() end
             end
             -- The glow is SUSTAINED for the whole window, and is what actually carries at this
-            -- size. Idempotent, so calling it every tick costs one comparison.
-            setImminent(t, true)
+            -- size. Idempotent, so calling it every tick costs one comparison — and inside the
+            -- last second it also spins the glow up and drives the ring's flash.
+            setImminent(t, true, remaining)
             applyTrackScale(t, remaining)   -- and the icon swells as it closes on "now"
           else
             t._highlighted = false
@@ -1104,6 +1157,13 @@ function BM._OnUpdate()
     end
   end
   if timeline then layoutQueue(queueBuf); wipe(queueBuf) end
+  -- The belt on the finishing list. Nothing should ever reach the timeout — but a fade that failed
+  -- to report back is exactly how the last bar of every fight used to leak, and this frame is up
+  -- precisely because that list is not empty, so the check is free and self-terminating.
+  for i = #finishing, 1, -1 do
+    local b = finishing[i]
+    if b._finishAt and (now - b._finishAt) > FINISH_TIMEOUT and b._finishDone then b._finishDone() end
+  end
   if dirty then relayout() end
   if activeCount == 0 then refreshDriver() end
 end

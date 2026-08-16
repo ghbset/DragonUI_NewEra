@@ -24,7 +24,13 @@ says it will** — and the fourth is art that only a mask can make sense of. The
 done by LibCustomGlow's ButtonGlow, held for the whole imminent window (§C.5e). The offline harness models
 all of it, and `/nebossmods debug`, the dump that found the last three, is part of the module.
 
-`qa/offline/test_bossmods.lua` passes (149 assertions): load order, the DBM gate, the settings store,
+**Three later corrections, all on the DBM side of the seam, all found by re-reading the installed
+DBM rather than by playing**: hiding DBM's bars stopped DBM *making* them after fifteen timers and
+took our own feed down with it (§C.5l); the last event of every fight leaked its frame and never
+played its finish (§C.5m); and §C.5j's second cause was an invention — DBM creates its bar before it
+fires, not after — which the harness had been written to agree with (§C.5j, corrected).
+
+`qa/offline/test_bossmods.lua` passes (175 assertions): load order, the DBM gate, the settings store,
 boot and editor registration, suppression across BOTH bar anchors, the timer feed with the installed
 fork's exact payload, pause/resume, the animation-release cycle through both renderers, **that
 railed events, queued events and warnings are all actually visible once their fades end**, warning
@@ -32,20 +38,34 @@ tiering, view swaps, the editor preview, atlas coverage (including that the §C.
 no icon while the glow ring still is), the imminent glow's full lifecycle across pooled frames, the
 diagnostic, both rail orientations and both icon directions, the imminent grow, hover tooltips
 (including the non-spell fallback), the bar flip, the edit-mode dialog (coverage against NewEra's own
-option list, the view-specific gating, Revert vs Reset, and per-tier editing) and the slash command.
-Eight mutation checks confirm it bites — the source's `DBM.Bars`
-lookup, the `SetScaleFrom`/`SetScaleTo` polyfill, the §C.5b Stop guards, either half of the §C.5c
-end-state handling, the §C.5d child-frame restore, the glow's clear-on-release, and pinning
-`isVertical()` back to true each fail it.
+option list, the view-specific gating, Revert vs Reset, and per-tier editing), the slash command,
+and — since §C.5l/m — DBT's own book-keeping under suppression, the last-second blink, and the
+release of the last bar of a fight.
+
+Mutation checks confirm it bites. Each of these, applied alone, fails the harness: the source's
+`DBM.Bars` lookup, the `SetScaleFrom`/`SetScaleTo` polyfill, the §C.5b Stop guards, either half of
+the §C.5c end-state handling, the §C.5d child-frame restore, the glow's clear-on-release, pinning
+`isVertical()` back to true, disabling §C.5l's reaper (the sweep or its ticker), letting it touch
+visible bars or `keep` bars, dropping §C.5m's mid-fade count or its timeout belt, flattening the
+§C.5h blink or skipping the alpha it restores before releasing a pooled glow, and — in the harness —
+ticking OnUpdate on hidden frames, or firing DBM's callback before its bar. Those last two are the
+MODEL rather than the module, and they are checked because a harness that gets either wrong makes
+§C.5l and §C.5j untestable, which is precisely what happened the first time.
 `qa/staticcheck.sh` PASSes with the TOC block in.
 
-**Two lessons worth keeping**, both paid for the same way:
+**Four lessons worth keeping**, each paid for the same way:
 
 1. *Existence is not visibility.* The first round of assertions checked that frames were built,
    shown, textured and anchored — all true while nothing was on screen.
 2. *A frame is not its tree.* The second round asserted the track's alpha and passed while the icon
    and countdown, which live on child frames, stayed at 0. Assert the thing the player actually
    looks at, not the handle you happen to hold.
+3. *Hiding something is not a drawing decision.* A hidden frame gets no OnUpdate and its animations
+   do not advance, so hiding is how you stop a state machine — DBM's (§C.5l) and our own (§C.5m).
+   Both faults are one client rule met from two directions.
+4. *A test written from an assumption cannot be evidence for it.* §C.5j invented an event ordering
+   and the harness was built to match, so a mutation check duly "confirmed" the code that ordering
+   called for. Model the source, then test against the model — and check the model itself.
 
 **Still unproven: a real encounter.** `/dbm test` exercises the adapter end to end — real callbacks,
 real bars, real warnings — so the remaining unknowns are the ones only a pull can answer: whether
@@ -53,6 +73,10 @@ real bars, real warnings — so the remaining unknowns are the ones only a pull 
 regular announces and special warnings, so the Medium tier's personal-type routing is untested
 against live data), whether MAX_BARS (12) is the right cap when a fight runs more timers than that,
 and whether the horizontal rail — asserted but never yet on screen — reads correctly.
+
+The §C.5l reaper is checkable in game without a raid, and worth checking once: with suppression on,
+run `/dbm test`, let its bars run out, and `/run print(DBT.numBars)`. It must be back at 0. Before
+the fix it stayed at whatever had been raised, and fifteen was the end of the module.
 
 ---
 
@@ -120,11 +144,25 @@ Deltas that matter:
    (`DBM-StatusBarTimers/DBT.lua:43`), and `DBT:GetBarIterator()` is at `:605`. The reference's
    `findDBTAnchor` reaches through `DBM.Bars` and would return `nil` forever → no suppression, so
    **double-drawn bars**. Fix in §C.4.
-6. **Two bar anchors, not one.** `smallBarsAnchor, largeBarsAnchor` are both created at `DBT.lua:179`
-   as unnamed `UIParent` children. The reference's "every bar is a child of the one small anchor, huge
-   bars only re-`SetPoint`" claim is false here — `DBT.lua:852`/`:859` note that Simple/NoAnim bars
-   are *created on the large anchor*. Suppression must cover both. Fix in §C.4.
-7. `DBMWarning` (`DBM-Core.lua:7812`) and `DBMSpecialWarning` (`:8849`) exist under those exact global
+6. **Two bar anchors, both made at load, and only one of them ever a parent.** `smallBarsAnchor,
+   largeBarsAnchor` are both created at `DBT.lua:179` as unnamed `UIParent` children and shown
+   immediately (`:184`, `:189`). On the parenting the reference was right after all: every bar is
+   created on the SMALL anchor (`DBT.lua:249`) and never reparented — a huge bar is only
+   re-`SetPoint`ed to the large one (`:663`, `:1120`). *An earlier revision of this plan said
+   otherwise, citing `DBT.lua:852`/`:859`; those lines are a comment about mimicking BigWigs' bar
+   STYLE, and the code around them re-points and nothing more.* So hiding the small anchor hides
+   every bar there is, and the large anchor discovery also collects will in practice never have a
+   child. Both are covered anyway: one table entry, against a fork that did reparent.
+7. **DBT's bars drive themselves, and its slots are finite.** `DBT.lua:251` puts an OnUpdate on every
+   bar frame, and `barPrototype:Update` is the only thing that ever ticks a bar down or ends one
+   (`timer <= 0` → `Cancel`). `Cancel` is also the only place `numBars` falls (`:969`), and
+   `CreateBar` refuses outright at `numBars >= 15` (`:294`). Hiding the anchors therefore does rather
+   more than hide them — see §C.5l.
+8. **The bar is created BEFORE the callback fires.** `DBT:CreateBar` at `DBM-Core.lua:10007`, an
+   early return if it failed at `:10008-10010`, and the `fireEvent` we hear at `:10049`. Two
+   consequences: suppression can act synchronously from inside the callback, and a timer DBM cannot
+   draw a bar for is a timer we are never told about at all.
+9. `DBMWarning` (`DBM-Core.lua:7812`) and `DBMSpecialWarning` (`:8849`) exist under those exact global
    names, so warning suppression ports unchanged.
 
 **Not ported: BigWigs.** The user's requirement is DBM. `BM.Bus*` stays as the seam so a BigWigs
@@ -432,6 +470,23 @@ LOOPING one fighting a per-tick scale over the same property has no good resolut
 it cannot drift: any interruption self-corrects on the next frame, and Icon Size multiplies it in one
 place so the two can never disagree.
 
+**The last second, added after.** A smooth ramp has no moment in it that says *now*, which the owner
+asked for on top of the swell. Inside `TL_URGENT` (1s) the imminent glow **blinks** at `FLASH_HZ` —
+the same LibCustomGlow proc glow that has been up since `TL_HIGHLIGHT`, its alpha driven per tick
+like the swell, and nothing new drawn beside it. A first cut instead flashed the retail highlight
+ring and spun the glow's ants up; that answered the wrong question. The ask was for the cue the
+player is already watching to become urgent, not for a second cue to appear next to it, and two
+effects competing for the same 35px icon is worse than one that changes.
+
+The glow frame is reached through `_ButtonGlow`, the library's own handle on the frame it lent us
+(`LibCustomGlow-1.0.lua:793`), which its pool resetter clears on release (`:583-585`) — so the
+field's presence is an honest test for "is there a glow to blink", and everything the glow draws is
+a texture on that frame, so one alpha write covers all of it. **Alpha is restored to 1 before the
+glow is ever stopped**: those frames are pooled, the resetter does not touch alpha, and that pool is
+shared with every other user of the library in this UI — the Cooldown Manager's alerts above all.
+A glow handed back half-dark is a glow some unrelated button borrows half-dark, and nothing over
+there would put it right.
+
 ### C.5i The warning icons were outside their own alpha tree
 
 Reported in game as "a lot of misalignment with ability icons and text in the warnings", with a
@@ -475,17 +530,75 @@ Two independent causes, both now read off the source rather than assumed:
    `DBMSpecialWarning` on every announce, so hiding those is a fight lost every time and won a frame
    later — a flicker.
 
-2. **The wrong moment.** `DBM_TimerStart` fires BEFORE the bar is created (`DBM-Core.lua:10049`), so
-   the synchronous pass inside the callback runs when the bar — and on a first pull, its anchor —
-   does not exist yet. A zero-delay `C_Timer.After` re-assert now runs after `DBT:CreateBar` returns.
+2. ~~**The wrong moment.**~~ **Withdrawn — this was never true.** The original text here said
+   `DBM_TimerStart` fires before the bar is created, so the synchronous pass inside the callback has
+   nothing to find, and added a zero-delay `C_Timer.After` re-assert to run "after `DBT:CreateBar`
+   returns". The order is the other way round: `DBT:CreateBar` is at `DBM-Core.lua:10007` and the
+   `fireEvent` at `:10049`, with an early return between them. The bar — and therefore its anchor,
+   and therefore the `DBT_Bar_N` global we find it through — always exists by the time we are
+   called. The deferred pass has been **removed**; cause 1 was the whole fault.
+
+   Worth recording as a process note, not just a correction: the harness had been written to model
+   the invented ordering, so a mutation check "proved" the deferred pass load-bearing. A test that
+   encodes an assumption cannot then be evidence for it. The fake DBM now creates the bar first and
+   only fires if that succeeded, and inverting it fails two assertions.
 
 Discovery also gained a `DBT_Bar_N` named-global scan (`DBT.lua:249`), which finds the anchors
 through DBT's reuse pool when no bar is live. That one is **belt, not the fix**: with a warm anchor
-cache the iterator finds them too, and the mutation checks confirm only Hide-not-alpha (4 failures)
-and the deferred re-assert (1) are load-bearing.
+cache the iterator finds them too, and the mutation checks confirm only Hide-not-alpha is
+load-bearing here.
 
-The harness now models DBM's real ordering — callback first, bar after — and its named bar globals
-and TOPRIGHT anchor. Modelling that order is what makes the second cause visible at all.
+### C.5l Hiding DBM's bars stops DBM making them
+
+The other half of the sentence "a hidden parent hides its children", which §C.5j leaned on and did
+not finish: **a frame that is not visible gets no `OnUpdate`** — and a DBT bar's countdown *is* its
+own OnUpdate (`DBT.lua:251`). So hiding the anchors does not merely conceal DBM's bars, it freezes
+them, and the consequences run straight through DBM:
+
+```
+no bar ever expires
+  -> numBars never falls              (Cancel is the only decrement, DBT.lua:969)
+    -> CreateBar refuses past fifteen (DBT.lua:294)
+      -> Timer:Start returns "error" before firing anything
+                                      (DBM-Core.lua:10008-10010; the fireEvent is at :10049)
+        -> we are never told about another timer, and the rail is blank for the session.
+```
+
+Nothing reclaims a slot on its own: DBT has no `CancelAllBars` anywhere, and an expired timer is
+pruned from `startedTimers` on a schedule (`DBM-Core.lua:10059-10061`), so a mod's combat-end
+`Stop()` does not reach its bar either. Fifteen distinct ids is not many when DBM appends target
+names to them.
+
+**Fix: reap the frozen bars.** `DBMAdapter.lua` runs the accounting half of DBT's own update on a
+0.2s ticker — the elapsed subtraction and the expiry test, against the same `lastUpdate` clock DBT
+uses, so DBT resumes mid-stride if suppression is switched off. A VISIBLE bar is skipped: that one
+is DBT's to drive, and taking time off it here as well would run it down at double speed.
+
+Two alternatives were weighed and dropped. Parking the anchors off screen keeps DBT running, but
+DBT clamps them to the screen (`DBT.lua:182`, `:187`) so it means unclamping and restoring frames we
+do not own, and it pays DBT's full per-bar redraw — colour lerp, `SetValue`, `SetText`, at frame
+rate — to draw for nobody. Hiding each bar's child StatusBar instead of the anchor keeps the
+OnUpdate alive but leaves an invisible mouse-enabled row on screen and fights `ApplyStyle`. The
+reaper is five arithmetic operations per bar at 5Hz, and keeps "DBM draws nothing" absolute.
+
+The ticker is the whole mechanism — deliberately no reap from inside the callback. That would only
+ever run *after* DBM had already tried to make its bar, so it could not free the slot that call
+needed; the point is for the slots to be free already.
+
+### C.5m The last bar of a fight never came back
+
+`finishBar` detaches its bar immediately, so the last event of a fight drops the live count to zero
+while its finish pop is still playing — and under "In combat only", the default, `refreshDriver`
+then hid the anchor in that same tick. An animation on a hidden frame does not advance: `OnFinished`
+never arrived, `releaseBar` never ran, and the bar never returned to the pool. One leaked frame and
+one leaked LibCustomGlow frame per fight, with the last ability vanishing instead of popping.
+
+Present in the 1.15 source too, and invisible from the outside, which is why neither the owner nor
+the first harness caught it. Fixed by counting bars mid-fade as work: a `finishing` list, included
+in `refreshDriver`'s test and swept in `_OnUpdate`, which force-releases anything still on it after
+one second — a fade that fails to report back cannot pin the frame up or hold a bar out of the pool.
+`endFinish` refuses a second pass, because a bar released twice is a bar pooled twice, and the next
+two events would then be handed the same track to draw on.
 
 ### C.5k "Duplicate icons below the warning" — DBM's, after all
 

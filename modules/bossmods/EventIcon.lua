@@ -158,8 +158,27 @@ function BM.MakeEventIcon(parent)
       -- what "Button Glow" means everywhere else in this UI. One glow per frame, so no key.
       if LCG.ButtonGlow_Start then LCG.ButtonGlow_Start(self, nil, GLOW_FREQUENCY) end
     elseif LCG.ButtonGlow_Stop then
+      -- Hand it back at full alpha whatever the flash left it on: the library POOLS these frames,
+      -- and the next button to be handed this one would inherit a dimmed glow.
+      self:SetFlash(1)
       LCG.ButtonGlow_Stop(self)
     end
+  end
+
+  -- f:SetFlash(alpha) — flash THE GLOW. Not a second effect beside it: this is the same
+  -- LibCustomGlow proc glow that has been running since the event went imminent, blinked by writing
+  -- its alpha, so the last second reads as the cue the player is already watching getting urgent.
+  --
+  -- `_ButtonGlow` is the library's own handle on the frame it lent us (LibCustomGlow-1.0.lua:793),
+  -- and it clears the field itself on release (:583-585), so its presence is the honest test for
+  -- "is there a glow to flash". Everything the glow draws is a TEXTURE on that frame, so one alpha
+  -- write covers all of it — no child-frame problem here (PORT_PLAN §C.5d).
+  --
+  -- Written per tick rather than animated, like the swell (§C.5h). The library animates this same
+  -- alpha only on its way in and out, neither of which overlaps the last second.
+  function f:SetFlash(a)
+    local glow = self._ButtonGlow
+    if glow then glow:SetAlpha(a or 1) end
   end
 
   return f

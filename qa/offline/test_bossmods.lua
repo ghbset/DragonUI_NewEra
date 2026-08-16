@@ -286,10 +286,14 @@ function frameMeta:GetStatusBarColor()
 end
 
 -- Drive every live frame's OnUpdate, as the client does each frame.
+-- OnUpdate runs on VISIBLE frames, not merely shown ones — the whole parent chain has to be up, as
+-- on the client. That distinction is not pedantry here: it is why hiding DBM's bar anchors freezes
+-- every bar underneath them, which is the fault the DBT reaper exists to answer. A driver that
+-- ticked `_shown` frames would model a client where that could not happen.
 local function frame(dt)
   advance(dt)
   for _, f in ipairs(allFrames) do
-    if f._shown and f._scripts.OnUpdate then f._scripts.OnUpdate(f, dt or 0.1) end
+    if f._scripts.OnUpdate and f:IsVisible() then f._scripts.OnUpdate(f, dt or 0.1) end
   end
 end
 
@@ -299,9 +303,9 @@ UIParent:SetSize(1024, 768)
 -- ── other client globals ────────────────────────────────────────────────────────────────────────
 function wipe(t) for k in pairs(t) do t[k] = nil end return t end
 
--- C_Timer.After, drained explicitly by the harness. The suppression's deferred re-assert rides on
--- it, and that deferral is the whole point: DBM fires its callback BEFORE creating the bar, so the
--- work has to happen a frame later.
+-- C_Timer.After, drained explicitly by the harness. Nothing in the module should be queueing on it
+-- any more — the suppression pass that once did was answering an event ordering that turned out to
+-- be backwards — so the queue being EMPTY is itself asserted below.
 local deferred = {}
 C_Timer = { After = function(_, fn) deferred[#deferred+1] = fn end }
 local function runDeferred()
@@ -450,9 +454,26 @@ end
 -- The real library is embedded and driven by the Cooldown Manager too; what matters here is the
 -- LIFECYCLE, not the art. A track frame is POOLED, so a glow that is started and never stopped is
 -- inherited by the next event to reuse it — an ability lit up as imminent while 40s out.
-local FakeLCG = {}
-function FakeLCG.ButtonGlow_Start(r) r._glowing = true;  r._glowStarts = (r._glowStarts or 0) + 1 end
-function FakeLCG.ButtonGlow_Stop(r)  r._glowing = false end
+-- `_ButtonGlow` is modelled because the last-second blink writes that frame's alpha: it is the
+-- library's own handle on the frame it lends out (LibCustomGlow-1.0.lua:793), and the pool's
+-- resetter clears the field on release (:583-585), which is what makes its presence a safe test.
+-- The glow frames themselves are POOLED, and the pool's resetter clears the owner's field and the
+-- frame's points but does NOT touch its alpha (:580-588). So a glow handed back mid-blink comes
+-- back out dimmed on whatever borrows it next — modelled here, because that is the whole reason the
+-- module restores alpha before it stops one.
+local FakeLCG, glowPool = {}, {}
+function FakeLCG.ButtonGlow_Start(r, _color, freq)
+  r._glowing, r._glowFreq = true, freq
+  r._glowStarts = (r._glowStarts or 0) + 1
+  r._ButtonGlow = r._ButtonGlow or table.remove(glowPool) or CreateFrame("Frame", nil, r)
+end
+function FakeLCG.ButtonGlow_Stop(r)
+  r._glowing = false
+  if r._ButtonGlow then
+    glowPool[#glowPool + 1] = r._ButtonGlow
+    r._ButtonGlow = nil     -- ButtonGlowResetter, LibCustomGlow-1.0.lua:583-585
+  end
+end
 function LibStub(name, silent)
   if name == "LibCustomGlow-1.0" then return FakeLCG end
   return nil
@@ -479,39 +500,65 @@ end
 
 -- DBT: the global bar library (DBM-StatusBarTimers/DBT.lua:43). Modelled with the details that
 -- turned out to matter:
---   * the two anchors are UNNAMED locals (DBT.lua:179), anchored TOPRIGHT — the right-hand side of
---     the screen, which is where DBM's un-suppressed bars were showing up;
---   * every bar FRAME is a NAMED global, DBT_Bar_1.. (DBT.lua:249), and keeps its name and parent
---     after release;
---   * bars are created only when the harness says so, so the ordering below can reproduce DBM's:
---     the callback fires FIRST and the bar appears after it.
+--   * the two anchors are UNNAMED locals created at load (DBT.lua:179), the small one anchored
+--     TOPRIGHT — the corner DBM's un-suppressed bars were showing up in;
+--   * EVERY bar frame is a NAMED global, DBT_Bar_1.., created on the SMALL anchor (DBT.lua:249)
+--     and never reparented; a huge bar is only re-POINTED to the large one (:663, :1120). It keeps
+--     both name and parent after release, sitting in DBT's reuse pool;
+--   * a bar's countdown IS its own OnUpdate (DBT.lua:251), and that handler is the ONLY thing that
+--     ever expires one — `timer <= 0 -> self:Cancel()` — which is also the only place numBars is
+--     decremented (:969);
+--   * CreateBar REFUSES once numBars reaches 15 (DBT.lua:294). That cap plus the line above is the
+--     whole reason the reaper exists: freeze the bars and DBM eventually stops making them.
 local smallBarsAnchor = CreateFrame("Frame", nil, UIParent)
 smallBarsAnchor:SetPoint("TOPRIGHT", UIParent, "TOPRIGHT", 223, -260)
-local largeBarsAnchor
+local largeBarsAnchor = CreateFrame("Frame", nil, UIParent)
+largeBarsAnchor:SetPoint("CENTER", UIParent, "CENTER", 0, -120)
 local dbtBars, dbtBarCount = {}, 0
-local DBT = { bars = {} }
+local DBT = { bars = {}, numBars = 0, Options = { KeepBars = false } }
 function DBT:GetBarIterator()
   local i = 0
   return function() i = i + 1; return dbtBars[i] end
 end
-local function addDBTBar(huge)
-  if huge and not largeBarsAnchor then
-    largeBarsAnchor = CreateFrame("Frame", nil, UIParent)
-    largeBarsAnchor:SetPoint("CENTER", UIParent, "CENTER", 0, -120)
+
+local function dbtCancel(bar)
+  if bar.dead then return end
+  bar.frame:Hide()
+  bar.dead = true
+  DBT.numBars = DBT.numBars - 1
+  for i = #dbtBars, 1, -1 do
+    if dbtBars[i] == bar then table.remove(dbtBars, i) break end
   end
-  local parent = huge and largeBarsAnchor or smallBarsAnchor
+end
+
+local function addDBTBar(huge, dur, keep)
+  if DBT.numBars >= 15 then return nil end          -- DBT.lua:294
   dbtBarCount = dbtBarCount + 1
-  local bar = { frame = CreateFrame("Frame", "DBT_Bar_" .. dbtBarCount, parent) }
-  dbtBars[#dbtBars+1] = bar
+  local bar = { timer = dur or 20, totalTime = dur or 20, lastUpdate = GetTime(), keep = keep }
+  bar.frame = CreateFrame("Frame", "DBT_Bar_" .. dbtBarCount, smallBarsAnchor)
+  if huge then bar.frame:SetPoint("TOP", largeBarsAnchor, "TOP", 0, 0) end   -- re-point, not reparent
+  bar.Cancel = dbtCancel
+  bar.frame:SetScript("OnUpdate", function(_, elapsed)
+    bar.lastUpdate = GetTime()
+    if bar.paused then return end
+    bar.timer = bar.timer - (elapsed or 0)
+    if bar.timer <= 0 and not (DBT.Options.KeepBars and bar.keep) then dbtCancel(bar) end
+  end)
+  dbtBars[#dbtBars + 1] = bar
+  DBT.numBars = DBT.numBars + 1
   return bar
 end
 
--- What DBM actually does on a timer: fire the callback, THEN create the bar (DBM-Core.lua:10049).
--- Getting this order right is what the first suppression missed.
+-- What DBM actually does on a timer: create the bar FIRST (DBM-Core.lua:10007), give up entirely if
+-- DBT refuses — `if not bar then return false, "error" end` (:10008-10010) — and only then fire the
+-- callback (:10049). An earlier version of this harness had it the other way round, which is what
+-- made a deferred suppression pass look load-bearing when the bar had in fact been there all along.
 local function fireDBMTimer(id, msg, dur, icon, spellId, huge)
+  local bar = addDBTBar(huge, dur)
+  if not bar then return nil end
   fireDBM("DBM_TimerStart", id, msg, dur, icon or "Interface\\Icons\\Spell_Fire_Fireball02",
           "cast", spellId, 1, "TestMod")
-  addDBTBar(huge)
+  return bar
 end
 
 _G.DBMWarning        = CreateFrame("Frame", "DBMWarning", UIParent)
@@ -613,12 +660,15 @@ section("SUPPRESSION")
 check("nothing of DBM's is suppressed before a single bar has existed",
   smallBarsAnchor:IsShown(), "no bar has been created, so there is no anchor to find yet")
 
--- The ordering that matters: DBM fires the callback BEFORE it creates the bar, so the first timer
--- of a session cannot be caught synchronously. The deferred pass is what catches it.
+-- The ordering that matters, and it is the opposite of what an earlier build assumed: DBM creates
+-- the bar first and only then fires the callback, so the anchor is reachable from inside the
+-- callback and ONE synchronous pass does it.
 fireDBMTimer("Sup1", "First of the pull", 20)
-check("…and the callback alone still cannot find it, because the bar came after", smallBarsAnchor:IsShown())
+check("the first timer of the session hides the anchor synchronously", not smallBarsAnchor:IsShown())
+check("…with nothing left queued for a later frame", #deferred == 0,
+  "a deferred re-assert would only be papering over a discovery that already worked")
 runDeferred()
-check("the deferred pass finds the anchor and HIDES it", not smallBarsAnchor:IsShown())
+check("…and draining the (empty) deferred queue changes nothing", not smallBarsAnchor:IsShown())
 -- DBM's warning ICONS are inline |T..|t escapes inside its own font strings (DBM-Core.lua:8121-27),
 -- not textures — so nothing about them can be suppressed except by taking the host off screen. It
 -- re-Shows the host on every announce and drives font alpha on a ticker, so alpha lost that race:
@@ -630,16 +680,16 @@ check("…and DBM showing one again is undone in the same frame", (function()
   return not _G.DBMWarning:IsShown()
 end)(), "DBM's warning host stayed up after it re-showed it")
 
-check("the large bar anchor does not exist yet", largeBarsAnchor == nil)
--- DBT creates huge bars ON the large anchor (DBT.lua:852) rather than re-pointing a small one, and
--- that anchor does not exist at boot.
-addDBTBar(true)
-BM.ApplyDBMSuppression()
-check("…and once a huge bar creates it, that anchor is hidden too", not largeBarsAnchor:IsShown())
+-- A huge bar is only re-POINTED to the large anchor (DBT.lua:663, :1120); it stays a CHILD of the
+-- small one (:249), so hiding that one takes it with it. Worth an assertion because the adapter
+-- collects both anchors and it would be easy to conclude the second one is load-bearing here.
+local huge = fireDBMTimer("Sup2", "A huge one", 12, nil, nil, true)
+check("a huge bar is hidden too, being a child of the small anchor after all",
+  huge ~= nil and not huge.frame:IsVisible())
 
 BM.SetSuppressionEnabled(false)
 check("turning suppression off hands every frame back",
-  smallBarsAnchor:IsShown() and largeBarsAnchor:IsShown() and _G.DBMWarning:IsShown())
+  smallBarsAnchor:IsShown() and _G.DBMWarning:IsShown())
 check("…and DBM can show its own warnings again", (function()
   _G.DBMWarning:Hide(); _G.DBMWarning:Show()
   return _G.DBMWarning:IsShown()
@@ -657,8 +707,7 @@ check("a bar born under a hidden anchor is invisible with no further work",
 -- between pulls while the frames still exist as globals under the anchor. Suppression has to survive
 -- that. NOTE this does not isolate the DBT_Bar_N scan from the iterator — the anchor cache is warm by
 -- now, so either route would pass it. That scan is belt for a COLD cache (a login after a previous
--- fight, where bars exist but none are live); the load-bearing fixes are Hide-not-alpha and the
--- deferred re-assert, and those two are what the mutation checks bite on.
+-- fight, where bars exist but none are live); the load-bearing fix is Hide-not-alpha.
 BM.ClearDBMSuppression()
 local liveBars = dbtBars
 dbtBars = {}                       -- everything released to the pool; globals remain
@@ -667,10 +716,101 @@ check("the anchor is still found with no LIVE bars, via the pooled frames' names
   not smallBarsAnchor:IsShown())
 dbtBars = liveBars
 
--- This section starts a real timer to exercise DBM's ordering, so it clears it again: the sections
+-- This section starts real timers to exercise DBM's ordering, so it clears them again: the sections
 -- below count what is live on the rail, and a stray bar from up here would fail them for a reason
 -- that has nothing to do with what they test.
 fireDBM("DBM_TimerStop", "Sup1")
+fireDBM("DBM_TimerStop", "Sup2")
+for _, f in ipairs(allFrames) do
+  for _, ag in ipairs(f._animGroups or {}) do if ag._playing then ag:Finish() end end
+end
+frame(0.1)
+for i = #dbtBars, 1, -1 do dbtCancel(dbtBars[i]) end
+
+-- ── DBT's book-keeping, while its bars are frozen ───────────────────────────────────────────────
+
+section("DBT BOOK-KEEPING (the 15-bar cap)")
+-- Hiding the anchors is what makes DBM's bars invisible. It also FREEZES them — no OnUpdate on a
+-- frame that is not visible, and a DBT bar's countdown IS its own OnUpdate — and that turns a
+-- drawing decision into a functional one:
+--
+--     no bar expires -> numBars never falls (DBT.lua:969)
+--       -> CreateBar refuses everything past fifteen (:294)
+--         -> DBM's Timer:Start returns before it fires anything (DBM-Core.lua:10008-10010)
+--           -> we are never told about another timer, and the rail is blank for the session.
+--
+-- Nothing else reclaims a slot: there is no CancelAllBars in DBT, and an expired timer is pruned
+-- from startedTimers on a schedule (DBM-Core.lua:10059-10061), so a mod's combat-end Stop() misses
+-- it. The reaper runs the accounting half of DBT's own update on the frozen bars instead.
+check("suppression is on and DBT starts this section empty",
+  not smallBarsAnchor:IsShown() and DBT.numBars == 0, "numBars = " .. DBT.numBars)
+
+-- First, the modelling this all rests on, asserted rather than assumed: OnUpdate follows
+-- VISIBILITY, not a frame's own shown flag. If this harness ticked hidden frames it would be a
+-- client on which the fault below cannot happen, and every check under it would be theatre.
+do
+  local parent = CreateFrame("Frame", nil, UIParent)
+  local child, ticks = CreateFrame("Frame", nil, parent), 0
+  child:SetScript("OnUpdate", function() ticks = ticks + 1 end)
+  frame(0.1)
+  check("a frame under a shown parent gets OnUpdate", ticks == 1, ticks)
+  parent:Hide()
+  frame(0.1)
+  check("…and stops dead when an ancestor is hidden, though it is still Shown itself",
+    ticks == 1 and child:IsShown(), ticks)
+end
+
+-- Fill DBT to its limit, then let those bars run out with NO further DBM traffic at all. Nothing
+-- calls the adapter in that stretch, so the per-event re-assert cannot help: the reaper's own
+-- ticker is the only thing running. This is the quiet gap between two pulls, and without it the
+-- first timer of the next pull is the one DBM cannot make a bar for — and so never reports.
+local filled = 0
+for i = 1, 15 do
+  if fireDBMTimer("Fill" .. i, "Ability " .. i, 1) then filled = filled + 1 end
+end
+check("fifteen bars fills DBT exactly", filled == 15 and DBT.numBars == 15, "numBars = " .. DBT.numBars)
+frame(0.4); frame(0.4); frame(0.4); frame(0.4)
+check("frozen bars expire on the reaper's own ticker, with no DBM event to prompt it",
+  DBT.numBars == 0, "numBars = " .. DBT.numBars)
+check("…so the first timer of the next pull still reaches us",
+  fireDBMTimer("AfterFill", "Next pull", 1) ~= nil)
+frame(0.4); frame(0.4); frame(0.4)
+
+local delivered = 0
+for i = 1, 20 do
+  if fireDBMTimer("Reap" .. i, "Ability " .. i, 1) then delivered = delivered + 1 end
+  frame(0.4); frame(0.4); frame(0.4)   -- each bar is 1s long; the reaper ticks every 0.2s
+end
+check("twenty consecutive timers all reach us, not just the first fifteen", delivered == 20,
+  delivered .. " of 20 — DBT stopped making bars, so DBM stopped firing the callback")
+check("…because the frozen bars were reaped as they expired", DBT.numBars <= 1,
+  "numBars = " .. DBT.numBars)
+
+-- The reaper touches FROZEN bars only. A VISIBLE bar is DBT's own to drive, and taking time off it
+-- here as well would run every DBM bar down at double speed. Driven straight at the reaper, since
+-- the ticker stops when suppression does and would otherwise hide the omission.
+BM.SetSuppressionEnabled(false)
+local ownDriven = addDBTBar(false, 4)
+frame(0.5); frame(0.5)
+check("with suppression off DBT drives its own bar down by exactly the elapsed time",
+  math.abs(ownDriven.timer - 3) < 0.05, "timer = " .. tostring(ownDriven.timer))
+advance(1.0)
+BM.ReapFrozenDBTBars()
+check("…and the reaper leaves a bar DBT can still see for itself alone",
+  math.abs(ownDriven.timer - 3) < 0.05, "timer = " .. tostring(ownDriven.timer))
+dbtCancel(ownDriven)
+BM.SetSuppressionEnabled(true)
+
+-- A `keep` bar sits at zero until DBM explicitly stops it (DBT's own expiry test excludes it), so
+-- reaping one would take a bar off DBM that DBM still believes it has.
+DBT.Options.KeepBars = true
+local kept = addDBTBar(false, 1, true)
+frame(0.5); frame(0.5); frame(0.5)
+check("a `keep` bar is left alone at zero, exactly as DBT leaves it", not kept.dead)
+DBT.Options.KeepBars = false
+dbtCancel(kept)
+
+BM.BusStopAll(BM.DBM_OWNER)
 for _, f in ipairs(allFrames) do
   for _, ag in ipairs(f._animGroups or {}) do if ag._playing then ag:Finish() end end
 end
@@ -854,6 +994,62 @@ check("stopping every timer empties the frame again", not anchor:IsShown())
 fireDBM("DBM_Wipe", { combatInfo = { name = "Test Boss" } })
 check("a wipe with nothing running is harmless", true)
 
+-- ── the last bar of a fight ─────────────────────────────────────────────────────────────────────
+--
+-- finishBar detaches its bar at once, so the LAST event of a fight drops the live count to zero
+-- while its finish pop is still playing. Under "In combat only" — the default — refreshDriver used
+-- to hide the anchor in that same tick, and an animation on a hidden frame does not advance: the
+-- OnFinished never arrived, the bar never went back to the pool, and the ability vanished instead
+-- of popping. One leaked frame per fight, invisible from the outside. The 1.15 source has it too.
+BM.SetOpt(TL, "visibility", "incombat")
+fireDBM("DBM_TimerStart", "Last", "The last one", 2, "Interface\\Icons\\Spell_Fire_Fireball02",
+        "cast", 1, 1, "TestMod")
+frame(0.1)
+check("the frame is up with one timer on it", anchor:IsShown())
+frame(2.2)   -- it lands: detached, nothing live, fade playing
+check("the frame stays up while the last event plays its finish", anchor:IsShown(),
+  "hidden mid-fade, so the animation can never finish and the bar never returns to the pool")
+finishAnimations()
+frame(0.1)
+check("…and comes down once that fade has actually finished", not anchor:IsShown())
+
+-- The belt. A fade that never reports back must not pin the frame up for ever, nor keep its bar out
+-- of the pool: after FINISH_TIMEOUT the release is forced.
+fireDBM("DBM_TimerStart", "Stuck", "Fade goes missing", 2, "Interface\\Icons\\Spell_Fire_Fireball02",
+        "cast", 1, 1, "TestMod")
+frame(0.1)
+frame(2.2)
+check("a stranded fade still holds the frame up a moment later", anchor:IsShown())
+frame(1.2)   -- past FINISH_TIMEOUT, with no animation ever completing
+check("…but is force-released once it is plainly not coming back", not anchor:IsShown())
+-- releaseBar stops the fade on its way out, so in practice no late OnFinished should arrive at all
+-- — endFinish still refuses a second pass, because a bar released twice is a bar pooled twice, and
+-- the next two events would then be handed the SAME track to draw on. Two live timers, two visible
+-- tracks, whichever route got us here.
+drainLog()
+finishAnimations()
+frame(0.1)
+check("a late OnFinished after a forced release is a no-op", drainLog() == "" and not anchor:IsShown())
+do
+  local rail
+  for _, c in ipairs(anchor._children or {}) do
+    for _, r in ipairs(c._regions or {}) do
+      if r._atlas == "combattimeline-line-right" then rail = c end
+    end
+  end
+  fireDBM("DBM_TimerStart", "TwoA", "First", 20, "icon", "cast", 1, 1, "TestMod")
+  fireDBM("DBM_TimerStart", "TwoB", "Second", 25, "icon", "cast", 1, 1, "TestMod")
+  frame(0.1)
+  local shown = 0
+  for _, t in ipairs(rail and rail._children or {}) do if t:IsShown() then shown = shown + 1 end end
+  check("…so the next two events get a track each, not one frame between them", shown == 2, shown)
+  fireDBM("DBM_TimerStop", "TwoA")
+  fireDBM("DBM_TimerStop", "TwoB")
+  finishAnimations()
+  frame(0.1)
+end
+BM.SetOpt(TL, "visibility", BM.DEFAULTS[TL].visibility)
+
 -- Both renderers reach release through a different group (the rail track's vs the bar row's), so
 -- both are driven. This is the exact sequence that produced ERROR #132 in game.
 section("ANIMATION RE-ENTRY (the #132 crash)")
@@ -996,6 +1192,10 @@ check("…then times out on its own (no C_Timer needed)",
 
 section("IMMINENT GLOW")
 check("nothing glows while every timer is far out", glowing() == 0, glowing())
+-- The start counter is cumulative and the track frames are POOLED, so it carries whatever earlier
+-- sections did with the same frame. Zero it: the question below is how many starts THIS episode
+-- costs, not how many the frame has seen in its life.
+for _, f in ipairs(allFrames) do f._glowStarts = nil end
 fireDBM("DBM_TimerStart", "Soon", "About to land", 3, "Interface\\Icons\\Spell_Fire_Fireball02",
         "cast", 1, 1, "TestMod")
 frame(0.1)
@@ -1041,12 +1241,82 @@ check("…so the pooled frame does not hand it to a 45s event", glowing() == 0, 
 fireDBM("DBM_TimerStop", "Long")
 finishAnimations()
 
+-- ── the last second ─────────────────────────────────────────────────────────────────────────────
+--
+-- The swell is a smooth ramp, so no moment in it says NOW. The last second is that moment, and it
+-- is THE SAME GLOW that says it — blinking, not replaced, not joined by a second effect. So the
+-- assertion is on the glow frame's own alpha.
+local function glowAlpha()
+  for _, f in ipairs(allFrames) do
+    if f._glowing and f._ButtonGlow then return f._ButtonGlow:GetAlpha() end
+  end
+end
+
+for _, f in ipairs(allFrames) do f._glowStarts = nil end
+fireDBM("DBM_TimerStart", "Landing", "Lands in a moment", 3.5, "Interface\\Icons\\Spell_Fire_Fireball02",
+        "cast", 1, 1, "TestMod")
+frame(0.1)
+check("at three seconds out the glow is up and at full strength", glowAlpha() == 1, tostring(glowAlpha()))
+
+frame(2.6)   -- ~0.8s to go: inside the last second
+-- Sampling across the wave has to catch it both lit and dimmed, or it is not blinking. FLASH_HZ is
+-- 6, so samples a sixteenth of a second apart land either side of an edge.
+check("inside the last second that same glow blinks", (function()
+  local lit, dim = false, false
+  for _ = 1, 8 do
+    frame(0.06)
+    local a = glowAlpha() or 1
+    if a > 0.9 then lit = true elseif a < 0.5 then dim = true end
+  end
+  return lit and dim
+end)())
+check("…and it is still the ONE glow, never stopped and restarted to do it", (function()
+  for _, f in ipairs(allFrames) do
+    if f._glowing and (f._glowStarts or 0) > 1 then return false end
+  end
+  return true
+end)(), "the blink was drawn by re-running ButtonGlow_Start, which replays its intro every time")
+check("…and nothing else was lit beside it — no second effect for the same job", (function()
+  for _, f in ipairs(allFrames) do
+    for _, r in ipairs(f._regions or {}) do
+      if r._atlas == "combattimeline-fx-highlight" and (r:GetAlpha() or 0) > 0 then return false end
+    end
+  end
+  return true
+end)())
+-- Release it at a DIM moment of the blink: the library pools these frames and its resetter does not
+-- touch alpha, so a glow handed back half-dark is a glow the next event borrows half-dark.
+for _ = 1, 10 do
+  if (glowAlpha() or 1) < 0.5 then break end
+  frame(0.02)
+end
+check("…caught mid-blink, at a dim moment", (glowAlpha() or 1) < 0.5, tostring(glowAlpha()))
+fireDBM("DBM_TimerStop", "Landing")
+finishAnimations()
+frame(0.1)
+-- Asserted on the POOL, not on the next borrower. That pool is shared with everything in this UI
+-- that uses LibCustomGlow — the Cooldown Manager's alerts most of all — and none of those write
+-- alpha per tick to paper over what we left behind. Our own next event would never notice.
+check("the glow goes back to that shared pool at full alpha, not at the blink's",
+  #glowPool > 0 and glowPool[#glowPool]:GetAlpha() == 1,
+  #glowPool > 0 and tostring(glowPool[#glowPool]:GetAlpha()) or "nothing was pooled")
+fireDBM("DBM_TimerStart", "Next", "Also imminent", 3, "Interface\\Icons\\Ability_Warrior_Cleave",
+        "cast", 1, 1, "TestMod")
+frame(0.1)
+check("the next imminent event glows at full strength, not at the alpha the last blink left",
+  glowAlpha() == 1, tostring(glowAlpha()))
+fireDBM("DBM_TimerStop", "Next")
+finishAnimations()
+frame(0.1)
+
 -- And the setting genuinely turns it off.
 BM.SetOpt(TL, "showGlow", false)
 fireDBM("DBM_TimerStart", "Soon2", "About to land", 3, "Interface\\Icons\\Spell_Fire_Fireball02",
         "cast", 1, 1, "TestMod")
 frame(0.1)
 check("with the setting off, nothing glows", glowing() == 0, glowing())
+frame(2.5)
+check("…so there is nothing to blink in the last second either", glowing() == 0, glowing())
 BM.SetOpt(TL, "showGlow", true)
 fireDBM("DBM_TimerStop", "Soon2")
 finishAnimations()
