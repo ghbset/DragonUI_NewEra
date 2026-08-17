@@ -164,7 +164,7 @@ The difference from every other version of this addon is where the data comes fr
 
 Retail's **Boss Abilities** timeline and **encounter warnings** (the `Blizzard_EncounterTimeline` / `Blizzard_EncounterWarnings` systems added in 11.1), downported from NewEra — a vertical rail down which spell icons slide toward "now", plus three tiers of centre-screen warning text flanked by spell icons.
 
-**Requires [Deadly Boss Mods](https://github.com/DeadlyBossMods).** This is the Questie pattern applied to encounters: DBM keeps ownership of *detection* — the combat log heuristics, the per-boss modules, the whole hard part — and this is a second view over its event bus, drawing retail's visuals from DBM's timers. Nothing here knows what a boss does. With DBM absent the module reports as unsatisfied in the options and never boots.
+**Requires Deadly Boss Mods.** DBM keeps ownership of *detection* — the combat log heuristics, the per-boss modules, the whole hard part — and this is a second view over its event bus, drawing retail's visuals from DBM's timers. Nothing here knows what a boss does. With DBM absent the module reports as unsatisfied in the options and never boots.
 
 - **Two views, switched live** — the **Timeline** rail (icons riding a line toward the "now" end, with a queued track above it for what's further out) or **Bars**, a Cooldown-Manager-styled row list. Both are placed from **`/dragonui edit`**, with their settings on the frame itself.
 - **Imminent cues** — an ability nearing its cast swells toward 1.35x, lights a proc glow, and blinks in its final second. The countdown sizes itself off the drawn icon and carries a shadow under its outline, so it stays readable on top of spell art at any Icon Size.
@@ -173,7 +173,7 @@ Retail's **Boss Abilities** timeline and **encounter warnings** (the `Blizzard_E
 - **Nothing DBM draws is lost.** A raid leader's pizza timer and the world-buff alert go straight to DBM's bar library and fire no callback, so they're adopted off a hook and rendered here rather than vanishing with the rest of DBM's bars.
 - **Per-frame settings** — view, orientation, icon direction, icon size, length, bar width, flip, background, opacity, padding, timers, tooltips, visibility, and the imminent glow; Revert (session undo) and Reset in the footer.
 
-One switch turns the whole thing on — timers and warnings together — and everything else about how it looks lives on the frames themselves in `/dragonui edit`. `/nebossmods` runs sample timers and warnings through the live path, switches views, and reports what's installed and configured. **Off by default.**
+**Off by default.**
 
 ## Roadmap
 
