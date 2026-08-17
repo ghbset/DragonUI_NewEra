@@ -36,7 +36,7 @@ harness had been written to agree with. And one thing reported from the screen r
 source: the rail countdown was hard to read, which was never the missing swipe it looked like
 (§C.5q).
 
-`qa/offline/test_bossmods.lua` passes (191 assertions): load order, the DBM gate, the settings store,
+`qa/offline/test_bossmods.lua` passes (194 assertions): load order, the DBM gate, the settings store,
 boot and editor registration, suppression across BOTH bar anchors, the timer feed with the installed
 fork's exact payload, pause/resume, the animation-release cycle through both renderers, **that
 railed events, queued events and warnings are all actually visible once their fades end**, warning
@@ -47,7 +47,10 @@ diagnostic, both rail orientations and both icon directions, the imminent grow, 
 option list, the view-specific gating, Revert vs Reset, and per-tier editing), the slash command,
 and — since the review pass — DBT's own book-keeping under suppression, the last-second blink, the
 release of the last bar of a fight, the adoption of callback-less bars (and the ordinary timers it
-must leave alone), the Bars-view plate, and the countdown font (§C.5q).
+must leave alone), the Bars-view plate, and the countdown font (§C.5q). Since the options page was
+cut back to one switch: that the switch reaches BOTH modules, and that suppression tracks the
+module's boot state rather than a setting of its own (§G.2, §C.4) — the suppression tests now drive
+that boot state, which is the only lever there is.
 
 Mutation checks confirm it bites. Each of these, applied alone, fails the harness: the source's
 `DBM.Bars` lookup, the `SetScaleFrom`/`SetScaleTo` polyfill, the §C.5b Stop guards, either half of
@@ -56,7 +59,9 @@ the §C.5c end-state handling, the §C.5d child-frame restore, the glow's clear-
 visible bars or `keep` bars, dropping §C.5m's mid-fade count or its timeout belt, flattening the
 §C.5h blink or skipping the alpha it restores before releasing a pooled glow, disabling §C.5n's
 adoption, making it synchronous, or dropping either its cancel hook or its handback, any of the four
-things §C.5o's plate does, any of the four things §C.5q's countdown font does, and — in the harness
+things §C.5o's plate does, any of the four things §C.5q's countdown font does, having the single
+enable switch write only `bossmods` (5 assertions), pinning `wantSuppression()` true regardless of
+the module's boot state (7), and — in the harness
 — ticking OnUpdate on hidden frames, firing DBM's callback before its bar, or letting
 `hooksecurefunc` be the no-op stub it used to be. Those last
 three are the MODEL rather than the module, and they are checked because a harness that gets any of
@@ -244,6 +249,15 @@ content frame's `OnSizeChanged`, so a view swap or a Length change follows autom
 The reference's approach is right — DBM's own `DontShow*`/`HideDBM*` options early-return *before*
 the callback fires, so using them would starve our renderer. Suppress visually, session-only, no
 SavedVariable writes. But the mechanism must change (§B.5, §B.6):
+
+**It is not a setting.** It shipped as one and should not have: with the rail up, DBM drawing the
+same timers beside it is the one outcome suppression exists to prevent, and with the rail gone
+there is nothing to hide for — so the toggle's only honest position was the default, and its other
+one was a way to get the double-draw back. `wantSuppression()` now reads `Mods.IsBooted("bossmods")`
+directly, which also removes the possibility of a stored flag disagreeing with what is on screen.
+`IsBooted` rather than `IsEnabled`, deliberately: the switch is reload-gated, so this session's
+frames keep drawing after it is turned off, and handing DBM its bars back at that moment would put
+both on screen for the rest of the session.
 
 ```
 -- Collect every distinct bar-frame parent from DBT:GetBarIterator() and alpha-0 each one.
@@ -798,15 +812,25 @@ reintroducing any of the four fails as a nil call here rather than silently doin
 
 1. **Timeline rail AND bars** — both shipped, defaulting to `timeline` as retail and the source do.
    The `View` dropdown switches them live.
-2. **Warning tiers** — shipped, as their own module (`bossmods_warnings`, `requires = {"bossmods"}`),
-   so they can be turned off without losing the timers.
+2. **Warning tiers** — shipped, as their own module (`bossmods_warnings`, `requires = {"bossmods"}`).
+   ~~So they can be turned off without losing the timers.~~ **Superseded**: the registry entry stays
+   separate, because they are a separate boot unit with their own frames, but the player gets ONE
+   switch. Two reload-gated toggles for two halves of one feature is two reloads to turn it on, and
+   nobody wants the warnings without the timers. `BM.SetEnabled` writes both ids; `BM.IsEnabled`
+   reads the timers', which `requires` already makes authoritative.
 3. **DBM timer colours — not taken.** This fork passes `colorId` on every `DBM_TimerStart` (its
    Add/AoE/Interrupt/Role classes) and retail's timeline is single-coloured, so using it would be a
    deliberate divergence from the thing being ported. The argument is still there if wanted: it is
    one `SetStatusBarColor` at the bus, behind a setting.
 4. **Queued-track drag handle** — resolved in §C.2 by sizing the anchor to include the queue.
-5. **Per-tier warning settings collapsed to one pair.** Retail gives each tier its own Edit Mode
-   dialog, which is where the source's per-tier icon-size/opacity lived. On a single options page,
-   three identical sliders labelled Critical/Medium/Minor is a worse trade than one pair that means
-   "the warnings", so the options write all three tiers. The store is still per-tier, so splitting
-   them later is a UI change only.
+5. **Layout lives only on the frame, not on the options page.** ~~Per-tier warning settings
+   collapsed to one pair on the options page, which writes all three tiers.~~ **Superseded.** The
+   options page carried a full duplicate of the appearance settings, written before §C.5f built the
+   on-frame dialog and left in place after. Two controls writing one value is bad on its own; the
+   copy on the options page was also the worse of the two, since it changed a frame you could not
+   see while changing it, and it could address the warning tiers only as a group — retail gives each
+   tier its own Edit Mode dialog, and so does §C.5f, so the group write was a limitation rather than
+   a simplification. Removed at the owner's call. The options section now carries only what the
+   editor cannot say: the two enable toggles, DBM suppression, and the test-feed button. Nothing was
+   lost — the harness's coverage assertion is against the dialog, and every setting the page had is
+   on it.

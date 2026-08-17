@@ -160,6 +160,21 @@ The difference from every other version of this addon is where the data comes fr
 
 `/nelevelup coverage` reports what has been learned for the current realm and class; `/nelevelup harvest` re-reads an open trainer on demand.
 
+### Boss Timers
+
+Retail's **Boss Abilities** timeline and **encounter warnings** (the `Blizzard_EncounterTimeline` / `Blizzard_EncounterWarnings` systems added in 11.1), downported from NewEra — a vertical rail down which spell icons slide toward "now", plus three tiers of centre-screen warning text flanked by spell icons.
+
+**Requires [Deadly Boss Mods](https://github.com/DeadlyBossMods).** This is the Questie pattern applied to encounters: DBM keeps ownership of *detection* — the combat log heuristics, the per-boss modules, the whole hard part — and this is a second view over its event bus, drawing retail's visuals from DBM's timers. Nothing here knows what a boss does. With DBM absent the module reports as unsatisfied in the options and never boots.
+
+- **Two views, switched live** — the **Timeline** rail (icons riding a line toward the "now" end, with a queued track above it for what's further out) or **Bars**, a Cooldown-Manager-styled row list. Both are placed from **`/dragonui edit`**, with their settings on the frame itself.
+- **Imminent cues** — an ability nearing its cast swells toward 1.35x, lights a proc glow, and blinks in its final second. The countdown sizes itself off the drawn icon and carries a shadow under its outline, so it stays readable on top of spell art at any Icon Size.
+- **Three warning tiers** — Critical, Medium and Minor, each its own placeable frame off `DBM_Announce`, each sized and dimmed from its own handle.
+- **DBM's own display is suppressed** while this is up, so nothing double-draws — bars *and* warnings, session-only, with no writes to DBM's saved settings. That isn't a setting: it follows whether this module is running, since the two are the same decision. DBM's sounds and voice packs are left alone either way.
+- **Nothing DBM draws is lost.** A raid leader's pizza timer and the world-buff alert go straight to DBM's bar library and fire no callback, so they're adopted off a hook and rendered here rather than vanishing with the rest of DBM's bars.
+- **Per-frame settings** — view, orientation, icon direction, icon size, length, bar width, flip, background, opacity, padding, timers, tooltips, visibility, and the imminent glow; Revert (session undo) and Reset in the footer.
+
+One switch turns the whole thing on — timers and warnings together — and everything else about how it looks lives on the frames themselves in `/dragonui edit`. `/nebossmods` runs sample timers and warnings through the live path, switches views, and reports what's installed and configured. **Off by default.**
+
 ## Roadmap
 
 Faithfully downporting the remaining NewEra panels to 3.3.5a:
@@ -174,6 +189,7 @@ Faithfully downporting the remaining NewEra panels to 3.3.5a:
 - [x] ~~**Adventure Guide (Encounter Journal)**~~ — *done* (Classic/TBC/Wrath instances, per-boss abilities + loot pages, search + breadcrumb nav)
 - [x] ~~**Cooldown Manager**~~ — *done* (Essential/Utility/Buff-icon/Tracked-bar viewers, DBC-sourced talent-gated spell lists, tracked buffs + trinkets, right-click alerts and ready sounds, edit-mode movers and per-viewer settings, per-spec layouts with import/export)
 - [x] ~~**Level Up Display**~~ — *done* (retail's level-up banner, with unlocks harvested from the live server's own trainer/battleground/dungeon data rather than a baked spell table, per-realm storage, grid overflow panel, `/nelevelup`)
+- [x] ~~**Boss Timers**~~ — *done* (retail's encounter timeline + warning tiers over DBM's event bus: rail or bar view, imminent glow/grow/blink, three placeable warning tiers, DBM display suppression with orphan-bar adoption; requires DBM)
 - [ ] **Bags** — *work in progress* (retail combined bag + individual-bag restyle: grid, smart sort, separated specialty-bag sections, keyring row, rarity/usable cues, money + currency band)
 - [ ] **Quest Log**
 - [ ] **Merchant**
@@ -184,4 +200,5 @@ Faithfully downporting the remaining NewEra panels to 3.3.5a:
 - **[DragonUI](https://github.com/NeticSoul/DragonUI)** by NeticSoul — the base 3.3.5a Dragonflight UI port this builds on.
 - **NewEra** by Ashgaroth — the Classic Era Dragonflight-style addon these panels are downported from.
 - **EZCollections** by ZEUStiger — some retail-look art (the bag window's loading spinner) is ported from EZCollections.
+- **Deadly Boss Mods** — the encounter detection behind the Boss Timers module; this addon only draws what DBM reports.
 - Dragonflight UI © Blizzard Entertainment.

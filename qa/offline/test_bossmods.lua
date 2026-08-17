@@ -657,8 +657,19 @@ check("the warning tiers carry their own defaults",
 -- ── boot ────────────────────────────────────────────────────────────────────────────────────────
 
 section("BOOT")
-NE.modules.SetEnabled("bossmods", true)
-NE.modules.SetEnabled("bossmods_warnings", true)
+-- ONE SWITCH for both modules. They stay separate boot units — separate frames, and the warnings
+-- declare the timers as a prerequisite — but the player has one control, so this is what the
+-- options page calls and it must reach both ids. Enabling only `bossmods` would leave the warnings
+-- silently off, which is the fault this asserts against.
+BM.SetEnabled(true)
+check("one switch enables the timers and the warnings together",
+  NE.modules.IsEnabled("bossmods") and NE.modules.IsEnabled("bossmods_warnings"))
+check("…and turning it off takes both back down", (function()
+  BM.SetEnabled(false)
+  local off = not NE.modules.IsEnabled("bossmods") and not NE.modules.IsEnabled("bossmods_warnings")
+  BM.SetEnabled(true)
+  return off
+end)())
 -- core/Modules.lua's own dispatcher owns the gate, so drive the event rather than calling boot.
 for _, f in ipairs(allFrames) do
   if f._events and f._events.PLAYER_LOGIN and f._scripts.OnEvent then
@@ -704,6 +715,23 @@ end
 -- ── suppression (the rewritten half) ────────────────────────────────────────────────────────────
 
 section("SUPPRESSION")
+-- Suppression is not a setting of its own any more: it follows whether OUR version is running
+-- (Register.lua's enable state, read by DBMAdapter's wantSuppression as IsBooted). So the harness
+-- drives the same lever the player has — the module's boot state — rather than a toggle that no
+-- longer exists. Everything below this point that used to call SetSuppressionEnabled calls this.
+local function setOursRunning(on)
+  NE.modules.booted["bossmods"] = on or nil
+  NE.modules.booted["bossmods_warnings"] = on or nil
+  BM.ApplyDBMSuppression()
+end
+check("suppression tracks our own module rather than a setting of its own",
+  BM.SuppressionActive() == true and (function()
+    NE.modules.booted["bossmods"] = nil
+    local off = BM.SuppressionActive()
+    NE.modules.booted["bossmods"] = true
+    return off == false
+  end)(), "wantSuppression() is not reading the module's boot state")
+
 -- DBM's bars are HIDDEN, not dimmed. A hidden parent hides its children on every client, where a
 -- parent's alpha reaching child frames is the thing this one is unreliable about (§C.5d) — and the
 -- bars are children of these anchors. Dimming them is what left DBM's own bars on screen for
@@ -740,14 +768,14 @@ local huge = fireDBMTimer("Sup2", "A huge one", 12, nil, nil, true)
 check("a huge bar is hidden too, being a child of the small anchor after all",
   huge ~= nil and not huge.frame:IsVisible())
 
-BM.SetSuppressionEnabled(false)
+setOursRunning(false)
 check("turning suppression off hands every frame back",
   smallBarsAnchor:IsShown() and _G.DBMWarning:IsShown())
 check("…and DBM can show its own warnings again", (function()
   _G.DBMWarning:Hide(); _G.DBMWarning:Show()
   return _G.DBMWarning:IsShown()
 end)(), "the OnShow guard kept firing after suppression was turned off")
-BM.SetSuppressionEnabled(true)
+setOursRunning(true)
 check("…and turning it back on re-hides them", not smallBarsAnchor:IsShown())
 
 -- A bar created while the anchor is already hidden is invisible from its first frame — which is the
@@ -842,7 +870,7 @@ check("…because the frozen bars were reaped as they expired", DBT.numBars <= 1
 -- The reaper touches FROZEN bars only. A VISIBLE bar is DBT's own to drive, and taking time off it
 -- here as well would run every DBM bar down at double speed. Driven straight at the reaper, since
 -- the ticker stops when suppression does and would otherwise hide the omission.
-BM.SetSuppressionEnabled(false)
+setOursRunning(false)
 local ownDriven = addDBTBar(false, 4)
 frame(0.5); frame(0.5)
 check("with suppression off DBT drives its own bar down by exactly the elapsed time",
@@ -852,7 +880,7 @@ BM.ReapFrozenDBTBars()
 check("…and the reaper leaves a bar DBT can still see for itself alone",
   math.abs(ownDriven.timer - 3) < 0.05, "timer = " .. tostring(ownDriven.timer))
 dbtCancel(ownDriven)
-BM.SetSuppressionEnabled(true)
+setOursRunning(true)
 
 -- A `keep` bar sits at zero until DBM explicitly stops it (DBT's own expiry test excludes it), so
 -- reaping one would take a bar off DBM that DBM still believes it has.
@@ -910,20 +938,20 @@ check("DBM cancelling an adopted bar stops ours with it",
 
 -- Adoption is suppression's job, not a feature of its own: with DBM drawing its own bars again,
 -- adopting one IS the double-draw.
-BM.SetSuppressionEnabled(false)
+setOursRunning(false)
 DBT:CreateBar(30, "DBM draws this one", "icon")
 runDeferred()
 check("with suppression off nothing is adopted — DBM has it",
   not BM.BusHasBar(BM.DBM_OWNER, "DBM draws this one"))
-BM.SetSuppressionEnabled(true)
+setOursRunning(true)
 
 DBT:CreateBar(30, "Handback", "icon")
 runDeferred()
 check("…and one adopted while it was on is handed back when it goes off", (function()
   if not BM.BusHasBar(BM.DBM_OWNER, "Handback") then return false end
-  BM.SetSuppressionEnabled(false)
+  setOursRunning(false)
   local gone = not BM.BusHasBar(BM.DBM_OWNER, "Handback")
-  BM.SetSuppressionEnabled(true)
+  setOursRunning(true)
   return gone
 end)())
 

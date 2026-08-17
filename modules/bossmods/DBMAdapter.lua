@@ -138,11 +138,19 @@ local function collectDBTAnchors()
   return dbtAnchors
 end
 
+-- Suppression is not a setting: it follows whether OUR version is running. With the rail up, DBM
+-- drawing the same timers beside it is the one outcome nobody wants; with it gone there is nothing
+-- to hide for. Register.lua records why this reads IsBooted rather than the (reload-gated) enable
+-- flag: the frames this session already built keep drawing until the reload, so DBM's come back at
+-- the same moment ours stop, never before.
 local function wantSuppression()
   if not BM.DBMPresent() then return false end
-  if BM.IsSuppressionEnabled and not BM.IsSuppressionEnabled() then return false end
-  return true
+  local Mods = NE.modules
+  return (Mods and Mods.IsBooted and Mods.IsBooted("bossmods")) and true or false
 end
+
+-- Exposed for `/nebossmods status`, which reports what is actually happening to DBM's frames.
+function BM.SuppressionActive() return wantSuppression() end
 
 -- ============================ Keeping DBT's books while its bars are hidden ==================
 --
@@ -319,12 +327,20 @@ local function hookDBT()
   if type(dbt.CancelBar) == "function" then hooksecurefunc(dbt, "CancelBar", onDBTCancelBar) end
 end
 
--- Re-evaluate the whole suppression state (boot + option toggle + per-event re-assert).
+-- Re-evaluate the whole suppression state (boot + per-event re-assert).
 function BM.ApplyDBMSuppression()
   local Mods = NE.modules
-  local booted = Mods and Mods.IsBooted
-  local barsOn     = wantSuppression() and booted and Mods.IsBooted("bossmods") or false
-  local warningsOn = wantSuppression() and booted and Mods.IsBooted("bossmods_warnings") or false
+  -- wantSuppression() already carries the timers' own booted test. The warnings keep their separate
+  -- one: they are one switch for the player now, but still two boot units, and only one of them
+  -- draws warnings — a tier that failed to boot must not leave DBM's own hidden with nothing in
+  -- their place.
+  local barsOn     = wantSuppression()
+  local warningsOn = barsOn and Mods and Mods.IsBooted and Mods.IsBooted("bossmods_warnings") or false
+
+  -- Not asserting anything is not the same as asserting nothing: whatever is still held has to be
+  -- handed back, the reaper stopped and the adopted bars given up, in the order ClearDBMSuppression
+  -- gets right. One exit, so there is no second copy of that sequence to drift from this one.
+  if not barsOn then return BM.ClearDBMSuppression() end
 
   for frame in pairs(collectDBTAnchors()) do
     setSuppressed(frame, barsOn, "hide")
@@ -359,7 +375,9 @@ function BM.HookDBMWarningHost(frame)
   end)
 end
 
--- Hand every suppressed frame back before we stop asserting (module turned off mid-session).
+-- Hand every suppressed frame back. Reached through ApplyDBMSuppression whenever suppression is no
+-- longer wanted — in practice a boot where DBM is present but our module is not running, since the
+-- enable switch is reload-gated.
 function BM.ClearDBMSuppression()
   -- Nothing is frozen once the anchors are back, so DBT drives its own bars again — and draws the
   -- ones we had been drawing on its behalf.

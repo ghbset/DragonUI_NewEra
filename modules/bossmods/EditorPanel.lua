@@ -321,6 +321,9 @@ local function buildPage(frameID)
     })
     col:AddCheckbox({
       label = L["Glow when an ability is imminent"],
+      desc  = L["On by default. The action-button proc glow, held for the last five seconds "
+              .. "before an ability lands. It stands in for a retail effect this client cannot "
+              .. "draw; with it off you get only the brief border flash, which is easy to miss."],
       get = boolGetter("showGlow", true), set = set("showGlow"),
     })
     col:AddDropdown({
@@ -330,9 +333,9 @@ local function buildPage(frameID)
       get = getter("tooltipAnchor"), set = set("tooltipAnchor"),
     })
   else
-    -- A warning tier carries the two settings that render (PORT_PLAN §C.1). Unlike the options page,
-    -- which writes all three tiers at once so one slider can mean "the warnings", this dialog is
-    -- opened FROM a tier and so edits exactly that one.
+    -- A warning tier carries the two settings that render (PORT_PLAN §C.1). This dialog is opened
+    -- FROM a tier and so edits exactly that one — which is why it is the only place these live: the
+    -- options page could address the tiers only as a group (PORT_PLAN §G.5).
     col:AddCompactSlider({
       label = L["Size"], min = 50, max = 200, step = 5, format = pct,
       desc  = L["Scales the whole warning — text and both flanking icons together."],

@@ -27,33 +27,33 @@ local TIMELINE_ID = BM.TIMELINE_ID
 -- ── Enable state ────────────────────────────────────────────────────────────────────────────────
 --
 -- Reload-gated, via the module registry (see core/Modules.lua's header): disabling writes the flag
--- and the module simply is not booted next reload. Both ship OFF — this feature puts a new element
+-- and the module simply is not booted next reload. It ships OFF — this feature puts a new element
 -- on screen mid-raid and depends on a third-party addon, so it waits to be asked, the same call the
 -- Cooldown Manager made.
+--
+-- ONE SWITCH, TWO MODULES. The registry keeps `bossmods` and `bossmods_warnings` separate because
+-- they are separate boot units with their own frames and their own `requires` edge, but the player
+-- gets one control: the timers and the warnings are two halves of one feature, and two reload-gated
+-- toggles for it is two reloads to turn it on. So SetEnabled writes both ids, and IsEnabled reads
+-- the timers' — which is also the one `requires` makes authoritative, since the warnings cannot
+-- boot without it either way.
 
-function BM.IsEnabled()  return NE.modules.IsEnabled("bossmods") and true or false end
-function BM.SetEnabled(v) NE.modules.SetEnabled("bossmods", v) end
-function BM.AreWarningsEnabled()  return NE.modules.IsEnabled("bossmods_warnings") and true or false end
-function BM.SetWarningsEnabled(v) NE.modules.SetEnabled("bossmods_warnings", v) end
+function BM.IsEnabled() return NE.modules.IsEnabled("bossmods") and true or false end
 
--- Whether to hide DBM's own bars and warnings. Live, not reload-gated: it is one alpha write per
--- frame in either direction (DBMAdapter.lua), so there is nothing to defer.
-function BM.IsSuppressionEnabled()
-  local bm = BM.Store(false)
-  if bm and bm.suppress ~= nil then return bm.suppress and true or false end
-  return true   -- default ON: drawing both ours and DBM's is the one outcome nobody wants
+function BM.SetEnabled(v)
+  v = v and true or false
+  NE.modules.SetEnabled("bossmods", v)
+  NE.modules.SetEnabled("bossmods_warnings", v)
 end
 
-function BM.SetSuppressionEnabled(v)
-  local bm = BM.Store(true)
-  if not bm then return end
-  bm.suppress = v and true or false
-  if v then
-    if BM.ApplyDBMSuppression then BM.ApplyDBMSuppression() end
-  elseif BM.ClearDBMSuppression then
-    BM.ClearDBMSuppression()
-  end
-end
+-- Hiding DBM's own display is NOT a setting. It follows whether our version is running: with the
+-- rail up, DBM drawing the same timers beside it is the one outcome nobody wants, and with the rail
+-- gone there is nothing to hide for. DBMAdapter's wantSuppression() reads IsBooted directly, so
+-- there is no flag here to fall out of step with it.
+--
+-- Deliberately IsBooted and not IsEnabled: turning the switch off writes the flag but leaves this
+-- session's frames drawing until the reload, so handing DBM its bars back at that moment would put
+-- both on screen for the rest of the session. They come back together with our own going away.
 
 -- ── Boot: the timeline ──────────────────────────────────────────────────────────────────────────
 
@@ -164,23 +164,16 @@ NE.modules.Register("bossmods_warnings", {
 })
 
 -- ── Options ─────────────────────────────────────────────────────────────────────────────────────
-
--- Read/write one timeline setting.
-local function get(key) return function() return BM.GetOpt(TIMELINE_ID, key) end end
-local function set(key) return function(v) BM.SetOpt(TIMELINE_ID, key, v) end end
-
--- The warning tiers share one editor per setting rather than three. DOWNPORT: retail gives each
--- tier its own Edit Mode dialog, which is where the source's per-tier options lived. On a single
--- options page three identical sliders labelled Critical/Medium/Minor is a worse trade than one
--- that means "the warnings", so this writes all three.
-local function getWarning(key)
-  return function() return BM.GetOpt(BM.WARNING_TIERS[1].id, key) end
-end
-local function setWarning(key)
-  return function(v)
-    for _, t in ipairs(BM.WARNING_TIERS) do BM.SetOpt(t.id, key, v) end
-  end
-end
+--
+-- LAYOUT SETTINGS ARE NOT HERE. Every appearance setting lives on the frame's own edit-mode dialog
+-- (EditorPanel.lua), which is retail's arrangement and the Cooldown Manager's: you change the thing
+-- while looking at it, next to the handle you just dragged. Duplicating them onto this page meant
+-- two controls writing one value, one of which showed its effect on a frame you could not see —
+-- and the warning tiers were worse still, since the page could only write all three at once while
+-- the dialog edits the tier you opened it from.
+--
+-- What stays is what the editor cannot say: whether the module runs at all, and what it does to
+-- DBM. Those are session/profile switches, not layout.
 
 NE.RegisterOptionSection({
   id    = "bossmods",
@@ -193,168 +186,28 @@ NE.RegisterOptionSection({
       C:AddDescription(scroll,
         L["|cffff5555DBM is not installed.|r This module renders boss ability timers, it does not "
         .. "detect them — the encounter data comes from Deadly Boss Mods. Install DBM and reload to "
-        .. "use it; the settings below are saved either way."])
+        .. "use it; the switches below are saved either way."])
     else
       C:AddDescription(scroll,
         L["Retail's boss ability timeline, drawn from |cffffcc55DBM's|r timers. Shows as a vertical "
         .. "rail of ability icons sliding toward now, or as a list of depleting bars. |cffffcc55Off "
-        .. "by default.|r Drag it with DragonUI's editor mode to reposition it."])
+        .. "by default.|r"])
     end
 
     C:AddToggle(scroll, {
       label   = L["Enable Boss Timers"],
-      desc    = L["Off by default. Reload (/reload) to apply."],
+      desc    = L["The timeline and the three warning lines together. While it is on, DBM's own "
+                .. "bars and warnings are hidden so the same timers are not drawn twice — its "
+                .. "sounds and voice packs are left alone. Off by default. Reload (/reload) to apply."],
       getFunc = function() return BM.IsEnabled() end,
       setFunc = function(v) BM.SetEnabled(v) end,
       requiresReload = true,
     })
 
-    C:AddToggle(scroll, {
-      label   = L["Enable Boss Warnings"],
-      desc    = L["The three large on-screen warning lines. Needs Boss Timers on. Reload (/reload) to apply."],
-      getFunc = function() return BM.AreWarningsEnabled() end,
-      setFunc = function(v) BM.SetWarningsEnabled(v) end,
-      requiresReload = true,
-    })
-
-    C:AddToggle(scroll, {
-      label   = L["Hide DBM's own bars and warnings"],
-      desc    = L["On by default, and the reason this does not simply double up on screen. DBM's "
-                .. "sounds and voice packs are left alone either way — only what it DRAWS is hidden."],
-      getFunc = function() return BM.IsSuppressionEnabled() end,
-      setFunc = function(v) BM.SetSuppressionEnabled(v) end,
-    })
-
-    if not (C.AddSlider and C.AddDropdown) then
-      C:AddDescription(scroll, L["The layout settings need a newer DragonUI options panel (AddSlider/AddDropdown)."])
-      return
-    end
-
-    if C.AddSpacer then C:AddSpacer(scroll) end
-    C:AddHeading(scroll, L["Appearance"])
-
-    C:AddDropdown(scroll, {
-      label   = L["View"],
-      values  = { timeline = L["Timeline (rail)"], bars = L["Bars"] },
-      getFunc = get("viewType"), setFunc = set("viewType"),
-    })
-
-    C:AddDropdown(scroll, {
-      label   = L["Orientation"],
-      values  = { vertical = L["Vertical"], horizontal = L["Horizontal"] },
-      getFunc = get("orientation"), setFunc = set("orientation"),
-    })
-
-    C:AddDropdown(scroll, {
-      label   = L["Icon direction"],
-      values  = { right = L["Down / Right"], left = L["Up / Left"] },
-      getFunc = get("iconDirection"), setFunc = set("iconDirection"),
-    })
-
-    -- The stored value is still "incombat" (retail's "In Encounter"), but the LABEL now says what
-    -- the code does: the frame follows whether there is anything to show, not UnitAffectingCombat.
-    -- That is the right behaviour and not worth "fixing" into a literal combat check — a pull timer
-    -- runs before combat starts, which is exactly when you want to see it.
-    C:AddDropdown(scroll, {
-      label   = L["Show the frame"],
-      desc    = L["DBM raises a timer a little before a pull and for a few things outside combat — a "
-                .. "queue, a break, a raid leader's own timer — so this follows the timers rather "
-                .. "than your combat flag."],
-      values  = { incombat = L["Only while timers are running"], always = L["Always"] },
-      getFunc = get("visibility"), setFunc = set("visibility"),
-    })
-
-    C:AddDropdown(scroll, {
-      label   = L["Tooltips"],
-      values  = { cursor = L["At the cursor"], default = L["Beside the frame"], hidden = L["Off"] },
-      getFunc = get("tooltipAnchor"), setFunc = set("tooltipAnchor"),
-    })
-
-    C:AddSlider(scroll, {
-      label   = L["Icon size"], min = 50, max = 150, step = 5,
-      getFunc = get("iconSize"), setFunc = set("iconSize"),
-    })
-
-    C:AddSlider(scroll, {
-      label   = L["Opacity"], min = 50, max = 100, step = 5,
-      getFunc = get("opacity"), setFunc = set("opacity"),
-    })
-
-    C:AddSlider(scroll, {
-      -- The rail's shadow plate / the bars' backing plate. Retail ships this invisible.
-      label   = L["Background"], min = 0, max = 100, step = 5,
-      getFunc = get("background"), setFunc = set("background"),
-    })
-
-    C:AddSlider(scroll, {
-      label    = L["Rail length"], min = 200, max = 800, step = 10,
-      getFunc  = get("length"), setFunc = set("length"),
-      disabled = function() return BM.GetOpt(TIMELINE_ID, "viewType") == "bars" end,
-    })
-
-    C:AddSlider(scroll, {
-      label    = L["Bar width"], min = 50, max = 150, step = 5,
-      getFunc  = get("barWidth"), setFunc = set("barWidth"),
-      disabled = function() return BM.GetOpt(TIMELINE_ID, "viewType") ~= "bars" end,
-    })
-
-    C:AddSlider(scroll, {
-      label    = L["Space between bars"], min = 0, max = 20, step = 1,
-      getFunc  = get("padding"), setFunc = set("padding"),
-      disabled = function() return BM.GetOpt(TIMELINE_ID, "viewType") ~= "bars" end,
-    })
-
-    C:AddToggle(scroll, {
-      label   = L["Flip horizontally"],
-      desc    = L["Bars view only. Mirrors each row — the icon moves to the right and the bar drains "
-                .. "the other way."],
-      getFunc = function() return BM.GetOpt(TIMELINE_ID, "flipHorizontal") == true end,
-      setFunc = set("flipHorizontal"),
-    })
-
-    C:AddToggle(scroll, {
-      label   = L["Show the countdown"],
-      getFunc = function() return BM.GetOpt(TIMELINE_ID, "showTimer") ~= false end,
-      setFunc = set("showTimer"),
-    })
-
-    C:AddToggle(scroll, {
-      label   = L["Show the ability name"],
-      desc    = L["Timeline view only — the bar list always names its abilities."],
-      getFunc = function() return BM.GetOpt(TIMELINE_ID, "showSpellName") == true end,
-      setFunc = set("showSpellName"),
-    })
-
-    C:AddToggle(scroll, {
-      label   = L["Glow when an ability is imminent"],
-      desc    = L["On by default. The action-button proc glow, held for the last five seconds "
-                .. "before an ability lands. It stands in for a retail effect this client cannot "
-                .. "draw; with it off you get only the brief border flash, which is easy to miss."],
-      getFunc = function() return BM.GetOpt(TIMELINE_ID, "showGlow") ~= false end,
-      setFunc = set("showGlow"),
-    })
-
-    if C.AddSpacer then C:AddSpacer(scroll) end
-    C:AddHeading(scroll, L["Boss Warnings"])
-
-    C:AddToggle(scroll, {
-      label   = L["Show the ability icons"],
-      desc    = L["The two copies of the ability's own icon either side of the text — what retail "
-                .. "draws. The text already names the ability, so this is decoration; turn it off for "
-                .. "a plain line of text."],
-      getFunc = function() return BM.GetOpt(BM.WARNING_TIERS[1].id, "showIcons") ~= false end,
-      setFunc = setWarning("showIcons"),
-    })
-
-    C:AddSlider(scroll, {
-      label   = L["Warning icon size"], min = 50, max = 200, step = 5,
-      getFunc = getWarning("iconSize"), setFunc = setWarning("iconSize"),
-    })
-
-    C:AddSlider(scroll, {
-      label   = L["Warning opacity"], min = 50, max = 100, step = 5,
-      getFunc = getWarning("opacity"), setFunc = setWarning("opacity"),
-    })
+    C:AddDescription(scroll,
+      L["|cffffcc55Everything else is on the frames themselves.|r Open |cffffcc55/dragonui edit|r, "
+      .. "click a Boss Timers handle, and its own dialog carries the view, size, length, opacity, "
+      .. "tooltips and the rest — each warning tier included, edited from the tier you clicked."])
 
     if C.AddButton then
       C:AddButton(scroll, {
@@ -407,7 +260,9 @@ SlashCmdList["NEBOSSMODS"] = function(msg)
       .. ", timers " .. (NE.modules.IsBooted("bossmods") and "on" or "off")
       .. ", warnings " .. (NE.modules.IsBooted("bossmods_warnings") and "on" or "off")
       .. ", view " .. tostring(BM.GetOpt(TIMELINE_ID, "viewType"))
-      .. ", hiding DBM's own " .. (BM.IsSuppressionEnabled() and "yes" or "no") .. ".")
+      -- Read from the adapter, not from a setting: there isn't one any more, and what this is for
+      -- is telling you what is ACTUALLY happening to DBM's frames.
+      .. ", hiding DBM's own " .. (BM.SuppressionActive and BM.SuppressionActive() and "yes" or "no") .. ".")
     return
   end
 

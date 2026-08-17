@@ -412,3 +412,64 @@ L["Windows"] = "Ventanas"
 -- ============================================================================
 
 L["Select All"] = "Seleccionar todo"
+
+-- ============================================================================
+-- BOSS TIMERS (modules/bossmods)
+-- ============================================================================
+
+L["Boss Timers"] = true
+L["Boss Abilities"] = true
+L["Boss Warnings"] = true
+L["Boss Warning - Critical"] = true
+L["Boss Warning - Medium"] = true
+L["Boss Warning - Minor"] = true
+L["Boss ability timers as a retail-style timeline or bar list. Reads its encounter data from DBM; without DBM installed there is nothing to show."] = true
+L["Large on-screen warnings for important boss abilities. Needs DBM and the Boss Timers module."] = true
+L["|cffff5555DBM is not installed.|r This module renders boss ability timers, it does not detect them — the encounter data comes from Deadly Boss Mods. Install DBM and reload to use it; the switches below are saved either way."] = true
+L["Retail's boss ability timeline, drawn from |cffffcc55DBM's|r timers. Shows as a vertical rail of ability icons sliding toward now, or as a list of depleting bars. |cffffcc55Off by default.|r"] = true
+L["|cffffcc55Everything else is on the frames themselves.|r Open |cffffcc55/dragonui edit|r, click a Boss Timers handle, and its own dialog carries the view, size, length, opacity, tooltips and the rest — each warning tier included, edited from the tier you clicked."] = true
+L["Enable Boss Timers"] = true
+L["The timeline and the three warning lines together. While it is on, DBM's own bars and warnings are hidden so the same timers are not drawn twice — its sounds and voice packs are left alone. Off by default. Reload (/reload) to apply."] = true
+L["View"] = true
+L["Timeline (rail)"] = true
+L["Bars"] = true
+L["Show the frame"] = true
+L["Only while timers are running"] = true
+L["Icon size"] = true
+L["Rail length"] = true
+L["Bar width"] = true
+L["Space between bars"] = true
+L["Show the countdown"] = true
+L["Show the ability name"] = true
+L["Timeline view only — the bar list always names its abilities."] = true
+L["Show a test timer"] = true
+L["Runs four sample timers and one warning through the same path a real DBM timer takes, so what you see is what an encounter will look like."] = true
+L["Glow when an ability is imminent"] = true
+L["On by default. The action-button proc glow, held for the last five seconds before an ability lands. It stands in for a retail effect this client cannot draw; with it off you get only the brief border flash, which is easy to miss."] = true
+L["Revert Changes"] = true
+L["Reset to Default"] = true
+L["Timeline view only. How far out the rail reaches — the icons space themselves along it."] = true
+L["Bars view only."] = true
+L["Size"] = true
+L["Scales the whole frame — the rail, the icons and the text together. Icon Size below scales only the icons."] = true
+L["Background"] = true
+L["The plate behind the frame. Retail ships it invisible."] = true
+L["Scales the whole warning — text and both flanking icons together."] = true
+L["The two spell icons either side of the text."] = true
+L["Orientation"] = "Orientación"
+L["Vertical"] = "Vertical"
+L["Horizontal"] = "Horizontal"
+L["Icon direction"] = true
+L["Down / Right"] = true
+L["Up / Left"] = true
+L["Tooltips"] = true
+L["At the cursor"] = true
+L["Beside the frame"] = true
+L["Off"] = true
+L["Flip horizontally"] = true
+L["Timeline view only. Which way the rail runs; the icons travel along it either way."] = true
+L["Timeline view only. Which end of the rail is |cffffcc55now|r — the end abilities travel toward and go off at."] = true
+L["Bars view only. Mirrors each row — the icon moves to the right and the bar drains the other way."] = true
+L["Hovering an ability shows its spell tooltip. DBM raises some timers that are not a spell at all — a pull timer, a phase change — and those show their own name instead."] = true
+L["Show the ability icons"] = true
+L["The two copies of the ability's own icon either side of the text — what retail draws. The text already names the ability, so this is decoration; turn it off for a plain line of text."] = true
