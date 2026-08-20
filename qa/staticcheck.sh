@@ -9,6 +9,8 @@
 #        - :SetMask(
 #        - ScrollBox
 #        - CreateFrame(... "FauxScrollFrameTemplate" ...) WITHOUT a name argument
+#        - a SINGLE-backslash path in a Lua string ("Interface\AddOns\..."): Lua 5.1 silently
+#          swallows the backslash, so the texture never loads and nothing reports an error
 #        - C_<Namespace>. usages cross-checked against compat/COVERAGE.md
 #   4. Exits non-zero with a FAIL banner if a TOC file is missing or luac fails;
 #      otherwise prints PASS. Trap hits are advisory (warnings), not fatal,
@@ -136,6 +138,39 @@ trap_grep() {
 trap_grep "SetShown("        'SetShown[[:space:]]*\('
 trap_grep ":SetMask("        ':SetMask[[:space:]]*\('
 trap_grep "ScrollBox"        'ScrollBox'
+
+# --- Swallowed path separators in texture strings ----------------------------
+# "Interface\AddOns\..." with SINGLE backslashes compiles clean: Lua 5.1's lexer drops the
+# backslash on an unrecognised escape (\A, \D, \T ...) instead of erroring, so the string becomes
+# "InterfaceAddOns..." and every SetTexture with it fails SILENTLY -- the texture simply keeps
+# whatever it had, which reads as "the reskin didn't apply" and nothing else. luac and luaparse both
+# pass it. Cost us a full round trip on the merchant port; this is the grep that would have caught it.
+# A correct literal doubles them: "Interface\AddOns\...".
+section_pathescape() {
+    # "Interface\AddOns\..." with SINGLE backslashes compiles clean: Lua 5.1 DROPS the backslash
+    # on an unrecognised escape (\A, \D, \T ...) rather than erroring, so the string silently becomes
+    # "InterfaceAddOns..." and every SetTexture with it fails without a word -- the texture just keeps
+    # whatever it had, which on screen reads as "the reskin did not apply". luac and luaparse both
+    # pass it. Cost a full round trip on the merchant port; this is the grep that catches it.
+    #
+    # Anchored on Interface + ONE backslash + a letter, which a correct literal ("Interface\\AddOns")
+    # cannot produce. Two filters keep it honest: comment lines (prose quotes paths single-
+    # backslashed, correctly) and long-bracket [[...]] strings (backslash already literal there).
+    local hits c
+    hits="$(grep -RnE '"Interface[\][A-Za-z]' --include='*.lua' . 2>/dev/null \
+            | sed 's|^\./||' \
+            | grep -v ':[[:space:]]*--' \
+            | grep -v '\[\[')"
+    if [ -n "$hits" ]; then
+        printf '%s\n' "${YEL}single-backslash path in a Lua string (Lua 5.1 swallows it):${RST}"
+        printf '%s\n' "$hits" | sed 's/^/    /'
+        c="$(printf '%s\n' "$hits" | grep -c .)"
+        WARN_COUNT=$((WARN_COUNT + c))
+    else
+        ok "no swallowed path separators in Lua strings"
+    fi
+}
+section_pathescape
 
 # --- Unnamed FauxScrollFrameTemplate CreateFrame calls -----------------------
 # A correct 3.3.5 call passes a name: CreateFrame("ScrollFrame", "MyName", parent, "FauxScrollFrameTemplate")

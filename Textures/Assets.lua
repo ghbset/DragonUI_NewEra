@@ -46,6 +46,15 @@ NE.tex.RegisterLocal(4701880, P .. "Common\\4701880-common-currencybox.blp")    
 --     every other chrome'd window).
 NE.tex.RegisterLocal(374155,  P .. "Common\\374155-uibackground-rock.blp")          -- 1024x1024 DXT1
 
+-- --- Slot chrome: the empty-slot recess (130766 UI-EmptySlot) and the slot RING (130841
+--     UI-Quickslot2). Both are same-FDID-different-art between clients — 3.3.5a's own copies are
+--     the classic wooden versions — so the retail BLPs ship here. Shared Core art, not a module's:
+--     NewEra keeps them in its Core atlas file for the same reason (merchant rows, the repair /
+--     sell-junk buttons and any future trade window all draw them, so disabling one module must
+--     not take the recess away from the others).
+NE.tex.RegisterLocal(130766, P .. "Common\\130766-ui-emptyslot-retail.blp")         -- 64x64 slot recess
+NE.tex.RegisterLocal(130841, P .. "Common\\130841-ui-quickslot2-retail.blp")        -- 64x64 slot ring
+
 -- --- InsetFrameTemplate inner-border (the thin gold inner-recess trim). Shared Core
 --     layout (CONTRACTS §3) — its 3 sheets belong in Core, never a single module's
 --     Assets (else disabling that module drops the inset border everywhere).

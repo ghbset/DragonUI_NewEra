@@ -190,6 +190,18 @@ Retail's **Boss Abilities** timeline and **encounter warnings** (the `Blizzard_E
 
 **Off by default.**
 
+### Merchant
+
+![Merchant](screenshots/merchant.png)
+
+The vendor window in the same chrome as the rest of the set, laid out against retail's own merchant frame rather than the client's.
+
+- **The frame** — Dragonflight metal border, the stone body every NewEra window shares, the vendor's portrait in the corner cutout and their name centred in the title band, and the Merchant / Buy Back tabs out on the frame's bottom edge in the modern tab art.
+- **A recessed grid** — the item rows and the pagination row sink into one dark inset, with the button bar outside it below, the way retail sinks them. The client has nothing like it; its wooden art implied the recess.
+- **Modern rows** — each row's slot recess, slot ring and label plate re-pointed at retail's art (this client ships the classic versions at the same file paths), item names coloured by rarity and clipped to one line instead of wrapping out of the row, and a quest "!" on anything that starts a quest — which the merchant API here cannot report, so it is read off the item's own tooltip.
+- **Sell all junk** — retail's one-click button. It desaturates when there is nothing to sell, and always asks before it sells. Only poor-quality items the vendor will actually pay for, never quest items.
+- **Buyback undo** — retail's undo arrow on the buyback slot, greyed out when there is nothing to buy back.
+
 ## Roadmap
 
 Faithfully downporting the remaining NewEra panels to 3.3.5a:
@@ -207,8 +219,8 @@ Faithfully downporting the remaining NewEra panels to 3.3.5a:
 - [x] ~~**Inspect**~~ — *done* (modern frame/portrait/tabs on the LoadOnDemand inspect window, its Character tab laid out like DragonUI's character panel with hover model controls and a guild line, a rebuilt PvP tab over the client's inspect-honor/arena data, and a Talents tab that opens this addon's own talent trees on the inspected player)
 - [x] ~~**Boss Timers**~~ — *done* (retail's encounter timeline + warning tiers over DBM's event bus: rail or bar view, imminent glow/grow/blink, three placeable warning tiers, DBM display suppression with orphan-bar adoption; requires DBM)
 - [ ] **Bags** — *work in progress* (retail combined bag + individual-bag restyle: grid, smart sort, separated specialty-bag sections, keyring row, rarity/usable cues, money + currency band)
+- [x] ~~**Merchant**~~ — *done* (modern chrome/portrait/tabs on the vendor window, laid out against retail's own frame: recessed grid, retail row art with rarity-coloured names and quest-starter bangs, retail's two-row bottom bar, a sell-all-junk button with confirmation and the buyback undo arrow)
 - [ ] **Quest Log**
-- [ ] **Merchant**
 - [ ] **Mail**
 
 ## Compatible with

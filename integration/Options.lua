@@ -85,6 +85,10 @@ local function builder(scroll)
             { id = "Inspect",     label = L["Inspect window"],
               desc = L["Modern frame, portrait and tabs on the inspect window, with its Character "
                      .. "tab laid out like the character window. Reload (/reload) to apply."] },
+            -- Also a reskin, not a replacement window: OFF means Blizzard's own vendor frame.
+            { id = "MerchantFrame", label = L["Merchant window"],
+              desc = L["Modern frame, portrait and tabs on the vendor window, plus a sell-all-junk "
+                     .. "button and the buyback undo arrow. Reload (/reload) to apply."] },
             { id = "LFG",         label = L["Looking For Group (Dungeon/Raid Finder)"] },
             { id = "combinedbag", label = L["Combined bag (all-in-one)"],
               desc = L["Our all-in-one bag window. Turn OFF to use the stock Blizzard bags instead. Reload (/reload) to apply."] },

@@ -62,23 +62,58 @@ end
 local _questScanTip
 local _questStarterCache = {}
 local QUEST_STARTS_TEXT = (type(ITEM_STARTS_QUEST) == "string" and ITEM_STARTS_QUEST) or "Begins a Quest"
-local function itemStartsQuest(bag, slot, itemID)
-  if itemID == nil then return false end
-  local cached = _questStarterCache[itemID]
-  if cached ~= nil then return cached end
+local function questScanTip()
   if not _questScanTip then
     _questScanTip = CreateFrame("GameTooltip", "NE_QuestScanTip", UIParent, "GameTooltipTemplate")
     _questScanTip:SetOwner(UIParent, "ANCHOR_NONE")
   end
-  _questScanTip:ClearLines()
-  _questScanTip:SetBagItem(bag, slot)
-  local found = false
-  for i = 1, _questScanTip:NumLines() do
+  return _questScanTip
+end
+
+-- Read the loaded scan tooltip. Returns found, scanned — `scanned` is false when the tooltip came
+-- back EMPTY (the item isn't in the client's cache yet), which is NOT the same answer as "no, this
+-- doesn't start a quest" and must not be cached as one.
+local function scanForQuestStart(tip)
+  local n = tip:NumLines() or 0
+  if n == 0 then return false, false end
+  for i = 1, n do
     local fs = _G["NE_QuestScanTipTextLeft" .. i]
     local t = fs and fs:GetText()
-    if t and t:find(QUEST_STARTS_TEXT, 1, true) then found = true; break end
+    if t and t:find(QUEST_STARTS_TEXT, 1, true) then return true, true end
   end
-  _questStarterCache[itemID] = found
+  return false, true
+end
+
+local function itemStartsQuest(bag, slot, itemID)
+  if itemID == nil then return false end
+  local cached = _questStarterCache[itemID]
+  if cached ~= nil then return cached end
+  local tip = questScanTip()
+  tip:ClearLines()
+  tip:SetBagItem(bag, slot)
+  local found, scanned = scanForQuestStart(tip)
+  if scanned then _questStarterCache[itemID] = found end
+  return found
+end
+
+-- Link-path sibling of itemStartsQuest, for items that have no bag/slot to scan (merchant rows,
+-- and anything else driven off an item link). ONE implementation of the "Begins a Quest" scan,
+-- one cache: a positive from either path answers for that itemID, whichever asks first.
+-- DOWNPORT: NewEra shipped this in Core/Items/ItemGrid.lua as ItemStartsQuestByLink; on 3.3.5a it
+-- is the ONLY way to bang a merchant row, since the merchant API reports no quest field at all.
+local function itemStartsQuestByLink(itemIDOrLink)
+  if itemIDOrLink == nil then return false end
+  local itemID = tonumber(itemIDOrLink)
+      or (type(itemIDOrLink) == "string" and tonumber(itemIDOrLink:match("item:(%d+)")))
+  if not itemID then return false end
+  local cached = _questStarterCache[itemID]
+  if cached ~= nil then return cached end
+  local tip = questScanTip()
+  tip:ClearLines()
+  local ok = pcall(tip.SetHyperlink, tip, "item:" .. itemID)
+  if not ok then return false end
+  local found, scanned = scanForQuestStart(tip)
+  if scanned then _questStarterCache[itemID] = found end
   return found
 end
 
@@ -179,6 +214,7 @@ end
 -- Back-compat exports.
 M.UpdateItemOverlays = updateItemOverlays
 G.ItemStartsQuest = itemStartsQuest
+G.ItemStartsQuestByLink = itemStartsQuestByLink
 M.HookNewItemClear   = hookNewItemClear
 M.SilenceOverlays    = silenceOverlays
 

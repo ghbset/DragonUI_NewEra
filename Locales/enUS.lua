@@ -501,6 +501,16 @@ L["Switches every Details! window to the skin and sets K/M number abbreviation. 
 L["Inspect window"] = true
 L["Modern frame, portrait and tabs on the inspect window, with its Character tab laid out like the character window. Reload (/reload) to apply."] = true
 
+L["Merchant window"] = true
+L["Modern frame, portrait and tabs on the vendor window, plus a sell-all-junk button and the buyback undo arrow. Reload (/reload) to apply."] = true
+
+-- ============================================================================
+-- MERCHANT
+-- ============================================================================
+
+L["Sell all junk items"] = true
+L["Sell all of your junk (gray) items?"] = true
+
 -- ============================================================================
 -- TALENTS
 -- ============================================================================

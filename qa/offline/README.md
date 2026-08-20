@@ -21,6 +21,13 @@ Added during the Cooldown Manager port (see `modules/cooldownviewer/PORT_PLAN.md
 
 ## Usage
 
+`check.js` runs two passes: the Lua 5.1 syntax gate, and a **forward-reference** check for calls to a
+file-local function written above its `local function` declaration. That second one is valid Lua and
+parses clean, but the name is not in scope at the call site — it resolves to a nil global and throws
+at call time. In this addon such calls are usually inside a `hooksecurefunc` post-hook, where a throw
+silently kills the rest of the chain and strands whatever that hook keeps in sync; it reads as "the
+window stopped updating", with no error shown. It has cost real debugging time here more than once.
+
 Syntax-gate any set of files (Lua 5.1):
 
 ```bash

@@ -118,6 +118,22 @@ modules\inspect\PaperDoll.lua
 modules\inspect\PvPPane.lua
 modules\inspect\Register.lua
 
+# --- Merchant (modern chrome on the client's vendor window; downport of NewEra/MerchantFrame) ---
+# A RESKIN, not a replacement: FrameXML keeps MerchantFrame_Update and all of the buy/sell/repair
+# behaviour, and we re-dress the frame it paints on. Load order: Assets (sheets + atlas rects; must
+# precede every SetAtlas call) -> MerchantFrame (chrome, rows, per-update sync, and the deferred
+# build) -> the two added buttons, whose builders MerchantFrame's build pass calls -> Register (the
+# reload-gated module entry). See modules/merchant/PORT_NOTES.md for what the 1.15 source has that
+# this client cannot.
+modules\merchant\Assets.lua
+modules\merchant\MerchantFrame.lua
+modules\merchant\SellAllJunk.lua
+modules\merchant\BuybackUndo.lua
+# /nemerchant — report-only state dump. A desaturated icon and an icon that never resolved look the
+# same on screen; this prints which one it is.
+modules\merchant\Diagnostics.lua
+modules\merchant\Register.lua
+
 # --- Professions (retail-style crafting window; downport of NewEra/Professions/Crafting) ---
 # Load order: Assets (atlas + texcoord registration) -> Window (chrome + event wiring) ->
 # RecipeList (left panel, FauxScrollFrame) -> Crafting (schematic form, rank bar, controls).

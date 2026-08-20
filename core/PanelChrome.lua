@@ -174,6 +174,11 @@ end
 -- panel composition). This explicit dark tint is what makes every NewEra window read dark immediately
 -- instead of only after a /reload settles it. It's the SHARED body tone for the whole window set —
 -- retune it here and the bags and every other chrome'd window move together.
+--
+-- Briefly set to 1.0 (NewEra applies no tint at all) while chasing the merchant window reading too
+-- dark against retail. That was the wrong lever: the merchant was simply not painting the explicit
+-- stone body every other window paints for itself, and once it did, the shared tint was fine. Left
+-- at 0.32 — the value the bags and the rest of the set are tuned against.
 PC.BODY_TINT = { 0.32, 0.32, 0.32 }
 
 -- Paint f.Bg with the standard dark rock body fill. Returns true when the rock art was available,

@@ -161,6 +161,10 @@ ALLOWED = {
         "Auctionator is a third-party addon's name",
     "modules/guild/Window.lua":
         "error passthrough from GuildControlPopupFrame; the payload is a client error string",
+    "modules/merchant/Diagnostics.lua":
+        "/nemerchant is a developer state dump -- widget names, atlas ids and texcoords, read back "
+        "to diagnose a reskin. Not player copy; translating it would make a bug report harder to "
+        "read, not easier",
     "modules/detailsskin/DetailsSkin.lua":
         "skin-table metadata handed to Details! for ITS skin list (author/desc, carrying the MIT "
         "attribution), not our chrome; every player-facing string for this module is in its "
