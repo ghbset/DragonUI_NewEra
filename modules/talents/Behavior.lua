@@ -70,6 +70,23 @@ end
 -- no preview, no Apply/Reset, no spec switching, no glyphs (there is no inspect glyph API here).
 --
 -- Set by T.ShowInspect(unit) and cleared when the window closes, so the next open is the player's.
+--
+-- EVERY PLACE THE FLAG HAS TO REACH, and what each one does about it. Two bugs have already come
+-- out of a call site that was missed (the portrait wearing the viewer's class, and issue #77's
+-- tooltip), so the list is written down rather than rediscovered:
+--
+--   GetTalentInfo / GetNumTalentTabs / GetNumTalents / GetTalentTabInfo / GetTalentPrereqs
+--                            pass `inspect` (Populate + talentInfo)
+--   GetActiveTalentGroup     inspect only; stays ARGLESS on the player path on purpose
+--   GameTooltip:SetTalent    passes `inspect` — the tooltip is not a getter but takes the same flag
+--   UnitClass                the portrait's class circle AND T.BackgroundNick's spec painting
+--   GetUnspentTalentPoints   never reached: unspentPoints returns 0 while inspecting
+--   AddPreviewTalentPoints / LearnPreviewTalents / ResetGroupPreviewTalentPoints / the preview CVar
+--                            never reached: editable is false, and wireNode refuses clicks
+--   playerTierDepth          deliberately the PLAYER's; the talent TABLES are server-wide, so the
+--                            depth is the same for whoever is being rendered
+--   Glyphs / Loadouts / SpecTabs
+--                            player-only by design; their panes and buttons are hidden in this mode
 -- ----------------------------------------------------------------------------
 function T.InspectUnit() return T._inspectUnit end
 local function inspecting() return (T._inspectUnit and true) or false end
@@ -216,11 +233,17 @@ end
 local function nodeTooltip(self)
   GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
   if self._tab and self._index and GameTooltip.SetTalent then
-    local isPet = self._isPet or false
-    local group = isPet and (T._activeGroup or 1) or (T._viewGroup or T._activeGroup or 1)
-    local ok = pcall(GameTooltip.SetTalent, GameTooltip, self._tab, self._index, false, isPet, group, previewOn())
+    local isPet   = self._isPet or false
+    local inspect = inspecting()
+    local group   = isPet and (T._activeGroup or 1) or (T._viewGroup or T._activeGroup or 1)
+    -- GameTooltip:SetTalent takes the same isInspect flag every talent GETTER does, in the same
+    -- argument slot, and it is just as load-bearing: with a hard `false` the tooltip describes the
+    -- talent YOU have at that (tab, index) rather than the one under the cursor (issue #77). No
+    -- preview side to an inspected unit either, so that argument goes false with it.
+    local preview = (not inspect) and previewOn() or false
+    local ok = pcall(GameTooltip.SetTalent, GameTooltip, self._tab, self._index, inspect, isPet, group, preview)
     if not ok then
-      ok = pcall(GameTooltip.SetTalent, GameTooltip, self._tab, self._index, false, isPet, group)
+      ok = pcall(GameTooltip.SetTalent, GameTooltip, self._tab, self._index, inspect, isPet, group)
     end
     if ok then
       GameTooltip:Show()

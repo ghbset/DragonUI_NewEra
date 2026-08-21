@@ -560,7 +560,11 @@ end
 -- T.SetBackground(tab) with the dominant tab; classBackgroundNick is the build-time fallback.
 -- ----------------------------------------------------------------------------
 function T.BackgroundNick(tab)
-  local _, classFile = UnitClass("player")
+  -- WHOSE class: the inspected unit's when there is one, or an inspected Death Knight's trees get
+  -- painted on your Paladin's artwork. (T.IsInspecting comes from Behavior.lua, which loads after
+  -- this file — guarded because this runs at paint time, not at load.)
+  local unit = (T.IsInspecting and T.IsInspecting() and T.InspectUnit and T.InspectUnit()) or "player"
+  local _, classFile = UnitClass(unit)
   local list = T.CLASS_BACKGROUND and T.CLASS_BACKGROUND[classFile]
   return (list and list[tab or 1]) or (list and list[1]) or "talents-background-warrior-arms"
 end

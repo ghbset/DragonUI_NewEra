@@ -39,7 +39,7 @@ gear in it, so it is the same size on screen.
 This was briefly 480. Blizzard's panes want 332x421 (talents) and ~336x389 (PvP) of content, and in
 424's 360 of interior they had to shrink to 0.86-0.90 and read as small, adrift versions of
 themselves; 480 gave them life size. Then both stopped being used — the PvP tab is ours and lays out
-to whatever the interior is, and talents moved to a paperdoll button — so the extra height bought
+to whatever the interior is, and the Talents tab opens our own window — so the extra height bought
 nothing and cost the match with the character panel.
 
 The fit below is therefore a FALLBACK PATH now, not the normal one: it is what the window degrades
@@ -204,9 +204,14 @@ windows centre theirs on the frame for the same reason.
   `modules/characterpanel/innerborder.lua` hosts its own — the outset is what keeps it outside the
   model's rect, which is what lets a texture on the parent show around a child frame's render at
   all. Our `InsetFrameTemplate` nineslice remains the fallback if that seam ever goes away.
-* **`UnitClass("player")` in the talent window's portrait path.** The window wears a class circle
-  rather than a head, and that circle was the VIEWER's class on an inspected unit's talents — one of
-  the handful of places in that module where "the player" was assumed rather than passed.
+* **"The player" is assumed in more places than the getters.** Threading `isInspect` through the
+  talent READS is not the whole job, and two bugs came out of the places it missed:
+  `UnitClass("player")` in the portrait path (the window wears a class circle, and it was the
+  VIEWER's class), the same call in `T.BackgroundNick` (an inspected Death Knight's trees painted on
+  your Paladin's spec artwork), and `GameTooltip:SetTalent`, which is not a getter but takes the
+  same flag in the same argument slot — with a hard `false` it describes the talent YOU have at that
+  (tab, index) rather than the one under the cursor (issue #77). `modules/talents/Behavior.lua` now
+  carries a checklist of every call site the flag has to reach and what each one does about it.
 * **`InspectTalentFramePortrait`** is the talents pane's own copy of the frame portrait. It is
   invisible in Blizzard's layout because it sits exactly under the real one; move the pane and it
   becomes a second head somewhere in the middle of the tree.
