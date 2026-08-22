@@ -49,7 +49,22 @@ core\Tabs.lua
 # Menu = a MenuUtil-shaped context-menu builder over UIDropDownMenu. Resolves its backend lazily,
 # so it does not care where ClassicAPI sits in the load order.
 core\Menu.lua
+# NavBar = retail's breadcrumb bar, ONCE. It was rebuilt from scratch twice on this client --
+# for the Adventure Guide and then for the world map -- and the second copy re-introduced two
+# faults the first had already fixed (Home sitting on the window portrait; crumbs drawn under
+# their own bar's regions). This is the journal's implementation, which was the better of the
+# two, with the trail handed in by the caller. Needs NE.tex + NE.nineslice, both above.
+core\NavBar.lua
 core\ButtonSkin.lua
+# Squelch = keep a Blizzard region hidden for good (a Show-swap for textures, an OnShow
+# re-hide for frames). Every reskin here has needed it; the world map is the case that forced
+# it into core, since WorldMap_ToggleSizeUp/Down re-show the client's chrome on every size
+# change and there is no single update hook to sweep from.
+core\Squelch.lua
+# MaxMin = the retail maximize/minimize button. 3.3.5a ships no MaximizeMinimizeButtonFrame
+# template, so it is BUILT rather than reskinned. Art is the RedButton family on sheet
+# 4698972, registered in NineSliceLayouts above — so this must load after it.
+core\MaxMin.lua
 core\ScrollbarReskin.lua
 core\ItemButton.lua
 core\ItemGrid.lua
@@ -133,6 +148,61 @@ modules\merchant\BuybackUndo.lua
 # same on screen; this prints which one it is.
 modules\merchant\Diagnostics.lua
 modules\merchant\Register.lua
+
+# --- World Map (modern chrome + breadcrumb + quest-log side panel) ---
+# The one module here that is a REBUILD rather than a downport: NewEra's map is written against
+# Classic Era's MapCanvas (ScrollContainer, SetMapID, uiMapIDs, data providers, C_Map), none of
+# which exists on 3.3.5a — this client has a fixed 1002x668 WorldMapDetailFrame, three dropdowns
+# and SetMapZoom(continent, zone). The structure and the geometry constants are NewEra's; what
+# they act on is this client's. See modules/worldmap/PORT_PLAN.md.
+#
+# Stands down when Mapster (or another map addon) is loaded — core/Modules.lua RIVALS.WORLDMAP.
+#
+# Load order: Assets (breadcrumb art + the POI sheet gate; before any SetAtlas call) -> WorldMap
+# (the chrome, which builds the window and the title/canvas spacer everything else anchors to) ->
+# NavBar (breadcrumb; needs WM.frame + WM.spacer) -> Pins (restyles the client's own pins; chains
+# onto WM.OnMapChanged, so after NavBar which registers on it too) -> QuestLogPanel + its detail
+# pane (the side panel, which asks the chrome to re-lay-out around it) -> Register.
+modules\worldmap\Assets.lua
+modules\worldmap\WorldMap.lua
+modules\worldmap\NavBar.lua
+modules\worldmap\Pins.lua
+# Fog of war: draw the overlays the client would NOT have drawn, tinted, so unexplored ground
+# shows greyed instead of black. Harvests what every character on the account discovers into
+# NE.db.worldmap.overlays and redraws it for all of them. Chains onto WM.OnMapChanged, so it
+# must load after WorldMap.lua; after Pins.lua too, since both register on that signal.
+# GENERATED (tools/worldmap-overlays/gen_overlays.py): every subzone overlay this client's own
+# WorldMapOverlay.dbc knows about, which is what lets the fog module reveal ground nobody on
+# the account has walked. Must load BEFORE FogClear, which reads it.
+modules\worldmap\OverlayData.lua
+modules\worldmap\FogClear.lua
+# GENERATED (tools/worldmap-overlays/gen_dungeonmaps.py) + the viewer that reads it. This client
+# renders instance floors natively, but only while the player is standing INSIDE the instance;
+# SetMapZoom has no dungeon entries. This is what lets the breadcrumb browse to one. Loads
+# after NavBar, which grows a Dungeons submenu from it.
+modules\worldmap\DungeonMapData.lua
+modules\worldmap\DungeonMap.lua
+# Magnifies the canvas inside a clipping ScrollFrame -- the only thing that clips children on this
+# client. The HD map patch ships 1024px tiles the engine lays out at 256px, so there is real
+# detail to uncover rather than pixels to enlarge.
+modules\worldmap\CanvasZoom.lua
+# Wheel over the canvas drives the magnifier above. New, not ported:
+# Mapster has no mousewheel handling at all -- its "zoom" is a corner handle that scales the window.
+modules\worldmap\WheelZoom.lua
+# The map filter: the round button the Map-Filter-Button art was shipped for, and a registry of
+# togglable categories. Loaded after the modules it switches, since it reconciles their state.
+modules\worldmap\PinFilter.lua
+modules\worldmap\QuestLogPanel.lua
+# Detail pane (description/objectives/rewards). Reads P._priv from QuestLogPanel.lua and exports
+# P._BuildDetail, so it MUST load after it.
+modules\worldmap\QuestLogDetail.lua
+# /neworldmap -- report-only state dump. This module is a rebuild against a frame tree that
+# cannot be read from outside the game, and the first in-game run produced two faults a
+# screenshot could not tell apart from a layout mistake (the client repainting its fullscreen
+# chrome, and a breadcrumb whose anchored width had not resolved yet). This prints which.
+modules\worldmap\Diagnostics.lua
+modules\worldmap\Register.lua
+
 
 # --- Professions (retail-style crafting window; downport of NewEra/Professions/Crafting) ---
 # Load order: Assets (atlas + texcoord registration) -> Window (chrome + event wiring) ->

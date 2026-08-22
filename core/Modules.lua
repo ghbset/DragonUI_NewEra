@@ -100,6 +100,12 @@ Mods.RIVALS = {
   ACTIONBARS = { "Bartender4", "Dominos" },
   CHAT       = { "Prat-3.0", "Chattynator" },
   TOOLTIP    = { "TipTac" },
+  -- DOWNPORT: NewEra's WORLDMAP rivals are Leatrix Maps and Carbonite, neither of which exists on
+  -- 3.3.5a. The 3.3.5a-era map addons are these — Mapster above all, which clears
+  -- UIPanelWindows["WorldMapFrame"] and takes over the frame's drag, scale, strata, borders and POI
+  -- math outright. Two addons cannot own that frame, so ours stands down.
+  -- NOT listed: ModernMapMarkers, which only ADDS pins and never touches the frame.
+  WORLDMAP   = { "Mapster", "Carbonite", "Leatrix_Maps", "MetaMap", "Cartographer", "Cartographer3" },
 }
 
 Mods.conflictCache = Mods.conflictCache or {}

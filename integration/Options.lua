@@ -90,6 +90,15 @@ local function builder(scroll)
               desc = L["Modern frame, portrait and tabs on the vendor window, plus a sell-all-junk "
                      .. "button and the buyback undo arrow. Reload (/reload) to apply."] },
             { id = "LFG",         label = L["Looking For Group (Dungeon/Raid Finder)"] },
+            -- A REBUILD rather than a replacement window: OFF means the client's own world map,
+            -- untouched. One row for the whole thing -- the chrome, the breadcrumb, the quest-log
+            -- side panel, fog, magnification and the filter all boot or none of them do. The
+            -- switches that are worth flipping in play are on the map itself, behind its filter
+            -- button, and need no reload.
+            { id = "WorldMap",    label = L["World map"],
+              desc = L["Modern frame, portrait and breadcrumb navigation on the world map, with the "
+                     .. "quest log as a side panel. Stands down automatically when a dedicated map "
+                     .. "addon (Mapster, Carbonite) is installed. Reload (/reload) to apply."] },
             { id = "combinedbag", label = L["Combined bag (all-in-one)"],
               desc = L["Our all-in-one bag window. Turn OFF to use the stock Blizzard bags instead. Reload (/reload) to apply."] },
         }

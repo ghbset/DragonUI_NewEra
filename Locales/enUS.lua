@@ -504,6 +504,15 @@ L["Modern frame, portrait and tabs on the inspect window, with its Character tab
 L["Merchant window"] = true
 L["Modern frame, portrait and tabs on the vendor window, plus a sell-all-junk button and the buyback undo arrow. Reload (/reload) to apply."] = true
 
+L["World map"] = true
+L["Modern frame, portrait and breadcrumb navigation on the world map, with the quest log as a side panel. Stands down automatically when a dedicated map addon (Mapster, Carbonite) is installed. Reload (/reload) to apply."] = true
+
+
+
+
+L["Drag to resize"] = true
+L["Right-click to reset the size."] = true
+
 -- ============================================================================
 -- MERCHANT
 -- ============================================================================

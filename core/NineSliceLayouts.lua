@@ -57,6 +57,21 @@ NE.tex.RegisterAtlases({
   ["redbutton-highlight-2x"]     = { file = 4698972, left = 0.449219, right = 0.589844, top = 0.007812, bottom = 0.304688, width = 36, height = 38 },
 })
 
+-- Condense (↙) / Expand (↗) glyphs off the SAME 4698972 sheet — the maximize/minimize pair, used by
+-- core/MaxMin.lua. Promoted here from modules/spellbook/Assets.lua so any window can use them
+-- regardless of TOC order (the spellbook registers an identical copy; RegisterAtlases overwrites,
+-- so the duplicate is harmless and the spellbook keeps working unchanged).
+-- 7-col x 3-row grid of 36x38 cells: row1 normal / row2 disabled / row3 pressed; col1=Condense,
+-- col2=Exit, col3=Expand, col4=Highlight.
+NE.tex.RegisterAtlases({
+  ["redbutton-expand-2x"]            = { file = 4698972, left = 0.300781, right = 0.441406, top = 0.007812, bottom = 0.304688, width = 36, height = 38 },
+  ["redbutton-expand-disabled-2x"]   = { file = 4698972, left = 0.300781, right = 0.441406, top = 0.320312, bottom = 0.617188, width = 36, height = 38 },
+  ["redbutton-expand-pressed-2x"]    = { file = 4698972, left = 0.300781, right = 0.441406, top = 0.632812, bottom = 0.929688, width = 36, height = 38 },
+  ["redbutton-condense-2x"]          = { file = 4698972, left = 0.003906, right = 0.144531, top = 0.007812, bottom = 0.304688, width = 36, height = 38 },
+  ["redbutton-condense-disabled-2x"] = { file = 4698972, left = 0.003906, right = 0.144531, top = 0.320312, bottom = 0.617188, width = 36, height = 38 },
+  ["redbutton-condense-pressed-2x"]  = { file = 4698972, left = 0.003906, right = 0.144531, top = 0.632812, bottom = 0.929688, width = 36, height = 38 },
+})
+
 -- Panel-tab family (sheet 4707839) — used by Tabs.lua.
 NE.tex.RegisterAtlases({
   ["uiframe-tab-left"]          = { file = 4707839, left = 0.015625, right = 0.562500, top = 0.816406, bottom = 0.957031, width = 35, height = 36 },
