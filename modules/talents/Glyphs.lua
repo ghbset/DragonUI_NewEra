@@ -186,8 +186,14 @@ if not StaticPopupDialogs["NE_GLYPH_REMOVE_CONFIRM"] then
           local tries = 0
           local function poll()
             tries = tries + 1
-            local _, _, glyphSpell = GetGlyphSocketInfo(socket, group)
-            local cleared = not (type(glyphSpell) == "number" and glyphSpell > 0)
+            -- Presence only, read layout-agnostically: 3.3.5a returns
+            -- (enabled, glyphType, glyphTooltipIndex, glyphSpellID, icon) while the retail shape
+            -- getSocketInfo also handles drops the tooltip index, so the spell ID sits at 4 here
+            -- and 3 there. Both slots are nil on an empty socket, so testing the pair is correct
+            -- either way.
+            local _, _, r3, r4 = GetGlyphSocketInfo(socket, group)
+            local cleared = not ((type(r3) == "number" and r3 > 0)
+                              or (type(r4) == "number" and r4 > 0))
             if cleared or tries >= 25 then
               if T.GlyphsRefresh then pcall(T.GlyphsRefresh) end
             elseif C_Timer and C_Timer.After then

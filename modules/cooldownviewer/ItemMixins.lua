@@ -400,17 +400,34 @@ local function isSpellOnGCD(spellID, start, duration)
   return math.abs(start - gcdStart) < 0.05 and math.abs(duration - gcdDuration) < 0.05
 end
 
+-- Start/end milliseconds out of UnitCastingInfo/UnitChannelInfo.
+--
+-- 3.3.5a keeps a `nameSubtext` return that retail dropped, so this client lays the pair out as
+-- (name, nameSubtext, text, texture, startTime, endTime, ...) — positions 5 and 6 — while the
+-- retail signature the upstream NewEra code was written against puts them at 4 and 5. Reading the
+-- retail positions here handed back the texture PATH as the start time, and the divide below threw
+-- "attempt to perform arithmetic on local 'csMS' (a string value)" on every refresh mid-cast.
+-- Pick the layout by type rather than by client, so either signature works: slot 4 is a number on
+-- retail and the texture string here.
+local function castTimesMS(info, unit)
+  if not info then return nil end
+  local a, b, c = select(4, info(unit))
+  if type(a) == "number" and type(b) == "number" then return a, b end
+  if type(b) == "number" and type(c) == "number" then return b, c end
+  return nil
+end
+
 -- Cast-lockout: mid-cast/channel, GetSpellCooldown reports the cast duration as the "cooldown" of
 -- the locked spells.
 local function isCastLockoutCooldown(start, duration)
   if not (start and duration) then return false end
-  local _, _, _, csMS, ceMS = UnitCastingInfo("player")
+  local csMS, ceMS = castTimesMS(UnitCastingInfo, "player")
   if csMS and ceMS then
     local castStart = csMS / 1000
     local castDur   = (ceMS - csMS) / 1000
     if math.abs(start - castStart) < 0.05 and math.abs(duration - castDur) < 0.1 then return true end
   end
-  local _, _, _, hsMS, heMS = UnitChannelInfo("player")
+  local hsMS, heMS = castTimesMS(UnitChannelInfo, "player")
   if hsMS and heMS then
     local chStart = hsMS / 1000
     local chDur   = (heMS - hsMS) / 1000
