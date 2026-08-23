@@ -73,10 +73,21 @@ local function dumpMode()
   say("  client thinks it is windowed: %s", yn(size ~= nil and size == windowedConst))
   say("  client's ORIGINAL windowed constant (captured at boot): %s",
       WM.clientWindowedSize and num(WM.clientWindowedSize) or "not captured")
-  say("  our canvas scale = %s   miniWorldMap cvar = %s",
-      num(WM.canvasScale), tostring(GetCVar and GetCVar("miniWorldMap")))
-  say("  maximized = %s   UIPanelWindows entry = %s",
-      yn(WM.maximized), _G.UIPanelWindows and _G.UIPanelWindows["WorldMapFrame"] and "PRESENT" or "cleared")
+  -- Neither of the two globals above is ours to write any more: the client reads both on its way to
+  -- a protected call, so an addon-written value makes the map unopenable in combat. If `size` has
+  -- drifted off the constant, something ELSE has written it and that is worth seeing here.
+  say("  our canvas scale = %s   with zoom = %s   client-space ratio = %s",
+      num(WM.canvasScale), num(WM.effectiveScale), num(WM.clientSpaceRatio))
+  say("  miniWorldMap cvar = %s   maximized = %s",
+      tostring(GetCVar and GetCVar("miniWorldMap")), yn(WM.maximized))
+  -- LEFT INTACT ON PURPOSE. Clearing this row is what made WorldMapFrame_SetMiniMode throw; the map
+  -- is detached through the frame's own layout attributes instead, which is what the next line
+  -- reports. "cleared" here is a FAULT, not the expected state.
+  local f2 = _G.WorldMapFrame
+  say("  UIPanelWindows entry = %s   layout attrs: defined=%s enabled=%s",
+      _G.UIPanelWindows and _G.UIPanelWindows["WorldMapFrame"] and "present" or "|cffff4040cleared|r",
+      tostring(f2 and f2.GetAttribute and f2:GetAttribute("UIPanelLayout-defined")),
+      tostring(f2 and f2.GetAttribute and f2:GetAttribute("UIPanelLayout-enabled")))
   -- The window is one number now, so print it -- and print whether the shape it produced is one the
   -- map actually fills, which is the invariant the whole resize design exists to keep.
   local stored = NE.db and NE.db.worldmap and NE.db.worldmap.canvasW
@@ -471,9 +482,78 @@ local function dumpPins()
   local arrow = _G.PlayerArrowFrame
   if arrow then
     local ds = _G.WorldMapDetailFrame and _G.WorldMapDetailFrame:GetEffectiveScale()
-    say("  player arrow: rides canvas = %s  modelScale = %s  canvasScale = %s  arrowEff = %s  detailEff = %s",
-        yn(WM.arrowRidesCanvas), num(WM.arrowModelScale), num(WM.canvasScale),
+    -- The arrow and the quest-POI layer are positioned by the CLIENT, in their own units, against
+    -- its own constant -- so their frame scale has to be the canvas-to-client ratio. If these two
+    -- disagree with `client-space ratio` above, the markers are in the wrong place.
+    say("  player arrow: frameScale = %s  modelScale = %s  arrowEff = %s  detailEff = %s",
+        num(arrow.GetScale and arrow:GetScale()), num(WM.arrowModelScale),
         num(arrow.GetEffectiveScale and arrow:GetEffectiveScale()), num(ds))
+    local poi = _G.WorldMapPOIFrame
+    -- frameScale MUST read 1 here: the markers are placed by offset (WM.PlaceQuestPOI) so that they
+    -- stay the client's size. A ratio on this frame magnifies the markers themselves.
+    say("  quest-POI layer: frameScale = %s  parent = %s",
+        num(poi and poi.GetScale and poi:GetScale()),
+        poi and poi.GetParent and poi:GetParent() and (poi:GetParent():GetName() or "<unnamed>") or "?")
+
+    -- The open-the-map ping. The CLIENT's is squelched and drawn by the engine for geometry this
+    -- window does not have (see the ping section in WorldMap.lua); ours is a Model of our own under
+    -- WorldMapButton, so it rides the canvas scale, the zoom and the clipping.
+    --
+    -- `model loaded` is the one that matters if the pulse is invisible rather than misplaced: the
+    -- model path is the client's own, but a modified client could have moved it.
+    local ping = WM.ping
+    if ping then
+      -- A TEXTURE, deliberately: a Model is drawn at the model file's own origin inside its frame, so
+      -- it can miss the player even when its anchor is exactly on the arrow. `art` empty means no
+      -- candidate path resolved on this client and the pulse is invisible rather than misplaced.
+      say("  ping (ours): built = yes  shown = %s  at = %s",
+          yn(ping.IsShown and ping:IsShown()),
+          WM.pingAt and string.format("%.3f, %.3f", WM.pingAt.x, WM.pingAt.y) or "not placed yet")
+      say("        art = %s  (%s)", WM.pingArt or "|cffff4040none resolved|r",
+          ping.isModel and "MODEL -- db.worldmap.pingModel is set" or "texture, the default")
+      -- PARENT IS THE FIELD TO READ IF IT IS MISPLACED AGAIN. A Model under the magnifier's
+      -- ScrollFrame is rendered against a scrolled-away origin no matter how correct its anchor is;
+      -- that is what put both the client's ping and our first one in the wrong hemisphere. It must
+      -- read WorldMapFrame -- the same parent as PlayerArrowFrame, the Model that works.
+      local pp = ping.GetParent and ping:GetParent()
+      local ap = _G.PlayerArrowFrame and _G.PlayerArrowFrame.GetParent and _G.PlayerArrowFrame:GetParent()
+      -- LEVEL matters as much as parent: WorldMapFrame is at the BOTTOM of this window's stack, so a
+      -- ping left at its parent's level is painted over by the map tiles -- placed correctly and
+      -- invisible, which looks like "the ping does not exist".
+      say("        level = %s  (canvas %s, pins %s, chrome %s)%s",
+          num(ping.GetFrameLevel and ping:GetFrameLevel()),
+          num(_G.WorldMapDetailFrame and _G.WorldMapDetailFrame:GetFrameLevel()),
+          num(_G.WorldMapPOIFrame and _G.WorldMapPOIFrame:GetFrameLevel()),
+          num(WM.border and WM.border:GetFrameLevel()),
+          (ping.GetFrameLevel and _G.WorldMapDetailFrame
+             and ping:GetFrameLevel() <= _G.WorldMapDetailFrame:GetFrameLevel())
+            and "  |cffff4040UNDER THE MAP|r" or "")
+      say("        parent = %s  frameScale = %s  (arrow's parent = %s)%s",
+          (pp and pp.GetName and pp:GetName()) or tostring(pp), num(ping.GetScale and ping:GetScale()),
+          (ap and ap.GetName and ap:GetName()) or tostring(ap),
+          (pp and ap and pp ~= ap) and "  |cffff4040MISMATCH|r" or "")
+      if ping.GetPoint then
+        local pt, rel, rpt, ox, oy = ping:GetPoint(1)
+        say("        anchor = %s -> %s %s  offset = %s, %s%s", tostring(pt),
+            (rel and rel.GetName and rel:GetName()) or tostring(rel), tostring(rpt),
+            num(ox), num(oy),
+            -- Sitting ON the arrow is the accurate answer and the one to expect. Falling back to the
+            -- canvas means PlayerArrowFrame had no rect to anchor to, and the pulse is then a
+            -- second, independently-rounded derivation of the same point -- close, but not exact.
+            (WM.pingAnchor == "PlayerArrowFrame") and "  (on the arrow)"
+              or "  |cffffd100(derived -- no arrow to sit on)|r")
+      end
+    elseif WM.pingRebound then
+      say("  ping: handed back to the ENGINE, re-bound to %s (db.worldmap.pingClient)",
+          tostring(WM.pingRebound))
+    else
+      say("  ping (ours): |cffff4040not built|r")
+    end
+    -- The client's, which must be down. If this says shown = yes the squelch has been lost and two
+    -- pings are up, one of them in the wrong place.
+    local cping = _G.WorldMapPing
+    say("        client's ping: %s",
+        cping and (cping:IsShown() and "|cffff4040still shown|r" or "squelched") or "absent")
   else
     say("  |cffff4040PlayerArrowFrame missing|r")
   end

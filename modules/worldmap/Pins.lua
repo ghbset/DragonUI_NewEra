@@ -6,7 +6,7 @@
 --
 --   * NO PIN POOLS TO RESTYLE. NewEra's pins are MapCanvas data-provider pins it creates itself.
 --     This client draws its own: landmark pins out of `GetNumMapLandmarks` / `GetMapLandmarkInfo`
---     onto `WorldMapPOIFrame`, and numbered quest pins out of `QuestPOIGetIconInfo` via
+--     onto `WorldMapButton`, and numbered quest pins out of `QuestPOIGetIconInfo` via
 --     `WorldMapFrame_DisplayQuestPOI`. So this file RESTYLES the client's pins in place; it never
 --     creates a pin, and it never supplies pin DATA.
 --
@@ -20,12 +20,21 @@
 --     `Model` frames on this client, not textures — `SetModelScale` is the only lever there is, so
 --     NewEra's `UI-WorldMapArrow-2x` swap has nothing to attach to.
 --
--- PINS ARE ALREADY CONSTANT-SIZE HERE, which is worth writing down because it looks like a bug
--- waiting to happen and is not. `WorldMapPOIFrame` is NOT one of the frames the chrome scales: the
--- client computes each pin's offset as `normalized * WorldMapDetailFrame:GetWidth() *
--- WORLDMAP_SETTINGS.size`, i.e. already in the WINDOW's units. So pins stay the same size as the
--- map is resized, which is what retail does, and no counter-scaling is needed or wanted — adding
--- some would square the factor and throw every pin off its landmark.
+-- THE TWO PIN LAYERS ARE NOT THE SAME SHAPE, and an earlier version of this header had it wrong in
+-- a way that cost a real bug (issue #78.4), so it is spelled out:
+--
+--   * LANDMARK pins (`WorldMapFramePOI1..N`) are real children of `WorldMapButton`, positioned in
+--     its units with no scale factor. They ride the canvas already — they grow and shrink with the
+--     map and stay on their landmark at any zoom. Nothing here or in the chrome scales them, and
+--     nothing should: a counter-scale would square the factor and throw every one of them off.
+--
+--   * QUEST pins live on `WorldMapPOIFrame`, which is NOT under WorldMapButton at all. It is a
+--     sibling of `WorldMapDetailFrame` under WorldMapFrame, at scale 1, merely anchored to the
+--     detail frame's corner — so the client converts for it, computing each offset as
+--     `normalized * WorldMapDetailFrame:GetWidth() * WORLDMAP_SETTINGS.size`. That conversion is
+--     only right if the frame's scale matches the constant it multiplies by, which is what
+--     applyClientSpaceScale in WorldMap.lua exists to arrange. Read the note over it before
+--     touching either layer.
 
 local NE = DragonUI_NewEra
 if not NE or NE.disabled then return end

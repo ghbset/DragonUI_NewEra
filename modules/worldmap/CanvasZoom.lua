@@ -13,15 +13,25 @@
 --     viewport (ScrollFrame, exactly the canvas area)
 --       + content (the scroll child, sized to the magnified map)
 --           + WorldMapDetailFrame   (tiles, fog overlays, our dungeon overlay)
---           + WorldMapButton        (and WorldMapPOIFrame beneath it — every pin)
+--           + WorldMapButton        (and the landmark pins, which ARE its children)
 --           + WorldMapFrameAreaFrame
 --           + WorldMapPlayerUpper / Lower
+--           + WorldMapPOIFrame      (the numbered quest markers)
 --
 -- THE CONTAINER SCALES; THE FRAMES DO NOT CHANGE SIZE. This is the load-bearing decision. Every one
--- of those frames keeps its own 1002x668 geometry, so the client's own POI arithmetic — which works
--- in canvas-local units and multiplies by WORLDMAP_SETTINGS.size — stays correct without knowing
--- anything about zoom. Pins, fog and the dungeon overlay come along as children, for free. Scaling
--- the frames individually instead would have meant re-deriving every pin position by hand.
+-- of those frames keeps its own 1002x668 geometry, so the client's own pin arithmetic — which works
+-- in canvas-local units — stays correct without knowing anything about zoom. Fog, the dungeon
+-- overlay and the landmark pins come along as children, for free. Scaling the frames individually
+-- instead would have meant re-deriving every pin position by hand.
+--
+-- WORLDMAPPOIFRAME IS IN THAT LIST AND HAS TO BE. It is NOT a child of WorldMapButton (an earlier
+-- comment here and in Pins.lua both said it was, and the offline harness modelled it that way, which
+-- is why this went unnoticed): on 3.3.5a it is a sibling of WorldMapDetailFrame, hanging off
+-- WorldMapFrame at scale 1 and merely anchored to the detail frame's corner. Left outside the
+-- viewport it was neither clipped — quest markers drew over the chrome once you panned — nor
+-- correctly placed, because its scale is what converts the client's canvas offsets into screen
+-- pixels. WorldMap.lua's applyClientSpaceScale owns that scale; this file only owns its parent and
+-- anchor, exactly as it does for the rest of the canvas.
 --
 -- QUEST BLOBS ARE HIDDEN WHILE ZOOMED, DELIBERATELY. `WorldMapBlobFrame` is PROTECTED: reparenting
 -- it risks taint and cannot happen in combat at all. Mapster hit the same wall and answers it with
@@ -52,11 +62,13 @@ CZ.MIN_ZOOM, CZ.MAX_ZOOM, CZ.STEP = MIN_ZOOM, MAX_ZOOM, STEP
 -- it — see the header.
 local CANVAS_FRAMES = {
   "WorldMapDetailFrame", "WorldMapButton", "WorldMapFrameAreaFrame",
-  "WorldMapPlayerUpper", "WorldMapPlayerLower",
+  "WorldMapPlayerUpper", "WorldMapPlayerLower", "WorldMapPOIFrame",
 }
 
--- Only these carry the canvas scale. The player arrow frames do not ride it on this client
--- (measured — see applyArrowScale in WorldMap.lua), so forcing it on them would double-apply it.
+-- Only these carry the canvas scale. WorldMapPOIFrame is deliberately absent: it is adopted for
+-- clipping and anchoring only, and its scale is the canvas-to-client ratio that
+-- applyClientSpaceScale (WorldMap.lua) works out — writing the canvas scale on it here would fight
+-- that and put every quest marker back in the wrong place.
 local SCALED = {
   WorldMapDetailFrame = true, WorldMapButton = true, WorldMapFrameAreaFrame = true,
 }
@@ -220,6 +232,14 @@ function CZ.Apply(f, geom)
         w:SetPoint("TOPLEFT", content, "TOPLEFT", 0, 0)
       end
     end
+  end
+
+  -- Re-assert the POI layer's frame level after the adoption, exactly as the client's own
+  -- WorldMapFrame_ResetFrameLevels does: reparenting can drop a frame to its new parent's level, and
+  -- a quest marker painted UNDER the map tiles is invisible rather than obviously broken.
+  local poi = _G.WorldMapPOIFrame
+  if poi and poi.SetFrameLevel and _G.WORLDMAP_POI_FRAMELEVEL then
+    poi:SetFrameLevel(_G.WORLDMAP_POI_FRAMELEVEL)
   end
 
   clampScroll()

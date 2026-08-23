@@ -824,9 +824,14 @@ function P.OpenCogMenu(anchor)
       func = function()
         if not box then return end
         box:SetChecked(not box:GetChecked())
-        if type(_G.WorldMapQuestShowObjectives_Toggle) == "function" then
-          pcall(_G.WorldMapQuestShowObjectives_Toggle)
-        end
+        -- Deferred out of combat: the client's toggle rebuilds the quest list, which calls the
+        -- PROTECTED `WorldMapBlobFrame:DrawQuestBlob`. Driving that from an addon mid-fight is
+        -- refused and shows as "Interface action failed because of an AddOn" (issue #78.1).
+        NE.FrameUtil.AfterCombat(function()
+          if type(_G.WorldMapQuestShowObjectives_Toggle) == "function" then
+            pcall(_G.WorldMapQuestShowObjectives_Toggle)
+          end
+        end)
       end,
     },
   }, P._menuHost, anchor, 0, 0, "MENU")

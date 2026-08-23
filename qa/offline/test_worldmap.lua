@@ -13,8 +13,11 @@
 -- The four facts the port is built around, and which every assertion here exists to protect:
 --
 --   1. WorldMapDetailFrame is 1002x668 — the same size as Era's canvas child — so NewEra's window
---      geometry transfers, but the client's own WORLDMAP_WINDOWED_SIZE does NOT. The chrome must
---      derive its scale from the canvas rect and write THAT into WORLDMAP_SETTINGS.size.
+--      geometry transfers, but the client's own WORLDMAP_WINDOWED_SIZE does NOT: the chrome derives
+--      its scale from the canvas rect. It must NOT write that scale into WORLDMAP_SETTINGS.size or
+--      WORLDMAP_WINDOWED_SIZE, because the client reads both on its way to a protected call and an
+--      addon-written global makes the map unopenable in combat (issue #78.1). The frames the client
+--      positions in its own units carry the ratio between the two scales instead.
 --   2. WorldMap_ToggleSizeUp/Down re-Show the client's chrome on every size change, so hiding it
 --      once is not enough. That is what core/Squelch.lua is for, and it is asserted directly.
 --   3. WorldMapBlobFrame is PROTECTED: DrawQuestBlob raises in combat.
@@ -69,6 +72,17 @@ local function addPointApi(o)
     if not pw or pw == 0 then return nil end
     return pw - (left[4] or 0) + (right[4] or 0)
   end
+  -- A frame the client has never positioned has no rect, and GetCenter answers nil for it. That is
+  -- not a detail here: it is the exact test the ping uses to decide whether there is a player arrow
+  -- to sit on, and a stub without this made the ping's PRIMARY path unreachable -- every assertion
+  -- below passed against the fallback while the code that actually runs in game went untested.
+  function o:GetCenter()
+    if #self._points == 0 then return nil end
+    local l, t = self:GetLeft(), self:GetTop()
+    if not (l and t) then return nil end
+    return l + (self:GetWidth() or 0) / 2, t - (self:GetHeight() or 0) / 2
+  end
+
   -- The frame's rect in its OWN coordinate space, which is the space GetCursorPosition has to be
   -- divided into before the two can be compared. Modelled off a TOPLEFT anchor to UIParent's
   -- BOTTOMLEFT, which is exactly how the resize pins the window for the duration of a drag.
@@ -215,6 +229,17 @@ local function newFrame(kind, name, parent)
   function f:SetMaxResize(w, h) self._maxResize = { w, h } end
   function f:SetAttribute(k, v) self._attrs = self._attrs or {}; self._attrs[k] = v end
   function f:GetAttribute(k) return self._attrs and self._attrs[k] end
+  -- The Model widget's setup calls, RECORDED rather than swallowed. A Model that is never given a
+  -- camera does not render where its frame is, and "we called SetModel and nothing else" is exactly
+  -- what put the first replacement ping off the player -- a stub that quietly accepts anything makes
+  -- that untestable.
+  function f:SetModel(v)      self._model = v end
+  function f:GetModel()       return self._model end
+  function f:SetCamera(v)     self._camera = v end
+  function f:SetFacing(v)     self._facing = v end
+  function f:SetSequence(v)   self._sequence = v end
+  function f:SetModelScale(v) self._modelScale = v end
+  function f:SetPosition(x, y, z) self._position = { x, y, z } end
   function f:SetScale(s) self._scale = s end
   function f:GetScale() return self._scale or 1 end
   function f:GetEffectiveScale() return self._scale or 1 end
@@ -318,7 +343,8 @@ UIParent:SetSize(1920, 1080)
 UIPanelWindows = { WorldMapFrame = { area = "center" } }
 UISpecialFrames = {}
 GameTooltip = { SetOwner = function() end, SetText = function() end, Show = function() end,
-                Hide = function() end, SetQuestLogItem = function() end }
+                Hide = function() end, SetQuestLogItem = function() end,
+                AddLine = function() end }
 UIErrorsFrame = { AddMessage = function() end }
 function GetPhysicalScreenSize() return 1920, 1080 end
 -- Returns a BOOLEAN, as the real one does. Handing back the stored string instead would be a lie
@@ -382,16 +408,77 @@ local detail = newFrame("Frame", "WorldMapDetailFrame", WMF)
 detail:SetSize(1002, 668)
 newFrame("Button", "WorldMapButton", WMF):SetSize(1002, 668)
 newFrame("Frame", "WorldMapFrameAreaFrame", WMF)
+-- The player arrow is a Model on this client: `SetModelScale` is a second multiplier on top of the
+-- frame scale, and the chrome drives both.
+do
+  local a  = newFrame("Model", "PlayerArrowFrame", WMF)
+  local fx = newFrame("Model", "PlayerArrowEffectFrame", WMF)
+  function a:SetModelScale(v)  self._modelScale = v end
+  function fx:SetModelScale(v) self._modelScale = v end
+end
+
+-- The client's open-the-map ping. Its FRAME is anchored correctly by WorldMapButton_OnUpdate and
+-- always was -- the pulse is drawn by the engine (`InitWorldMapPing`), for the client's own map
+-- geometry, which is why nothing done to this frame from Lua ever moved it. It is squelched, and
+-- WorldMap.lua builds its own; these assertions are about that.
+--
+-- THIS HARNESS CANNOT CATCH THE ORIGINAL BUG and should not pretend to: an engine-drawn model has no
+-- Lua surface to assert against. What it CAN hold is the shape of the replacement -- that the
+-- client's is down, that ours is a real Model under the button, and that it is placed in canvas
+-- units off GetPlayerMapPosition.
+newFrame("Model", "WorldMapPing", WorldMapButton):SetSize(50, 50)
+
+
+-- Two earlier fixes leaned on `WorldMapPlayer`; there is deliberately none here, because this client
+-- does not define one either. A repair that needs it returns early and silently, which is exactly
+-- how one of those shipped looking green.
+playerMapX, playerMapY = 0.31, 0.62
+function GetPlayerMapPosition(unit) return playerMapX, playerMapY end
+
 local blob = newFrame("Frame", "WorldMapBlobFrame", WMF)
 blob._protected = true
 local blobDraws = {}
 function blob:DrawQuestBlob(id, show) blobDraws[#blobDraws + 1] = { id = id, show = show } end
-newFrame("Frame", "WorldMapPOIFrame", WorldMapButton)
--- The client's landmark pins. It creates and re-shows WorldMapFramePOI1..N on every map update, so
--- anything that filters them has to re-apply rather than hide once -- which is the behaviour the
--- filter assertions drive.
+-- THE QUEST-POI LAYER IS NOT UNDER THE BUTTON. WorldMapFrame.xml declares it as a sibling of
+-- WorldMapDetailFrame, hanging off WorldMapFrame at scale 1 and merely anchored to the detail
+-- frame's corner -- which is why the client has to convert its offsets with WORLDMAP_SETTINGS.size,
+-- and why the frame's own scale is what makes that conversion land. This harness used to model it
+-- as a child of WorldMapButton, and that single wrong line is what let issue #78.4 (quest markers
+-- flying off the map as soon as you zoom) through every assertion in this file.
+newFrame("Frame", "WorldMapPOIFrame", WMF)
+-- The client's numbered quest markers. `WorldMapFrame_UpdateQuests` builds WorldMapQuestFrame1..N,
+-- stamps each with its questId, hands it a pooled icon out of WorldMapPOIFrame and stamps the owner
+-- back onto the icon -- that last part is what stops a recycled button being dragged off a live
+-- objective, so the stub models it.
+questPOIPositions = { [11] = { 0.25, 0.60 }, [12] = { 1.20, 0.01 } }
+function QuestPOIGetIconInfo(questId)
+  local e = questPOIPositions[questId]
+  if not e then return nil end
+  return 1, e[1], e[2], 1
+end
+for i = 1, 2 do
+  local qf = newFrame("Frame", "WorldMapQuestFrame" .. i, WMF)
+  qf.questId = 10 + i
+  qf.poiIcon = newFrame("Button", "NE_TestQuestPOI" .. i, WorldMapPOIFrame)
+  qf.poiIcon:SetSize(32, 32)
+  qf.poiIcon.quest = qf
+end
+-- The client's own placement, in the client's units -- which is what our post-hook has to override.
+function WorldMapFrame_DisplayQuestPOI(questFrame)
+  local icon = questFrame and questFrame.poiIcon
+  local e = icon and questPOIPositions[questFrame.questId]
+  if not e then return end
+  icon:ClearAllPoints()
+  icon:SetPoint("CENTER", "WorldMapPOIFrame", "TOPLEFT",
+                e[1] * 1002 * WORLDMAP_SETTINGS.size, -e[2] * 668 * WORLDMAP_SETTINGS.size)
+end
+
+-- The client's landmark pins, which ARE the button's children and therefore ride the canvas scale
+-- for free. It creates and re-shows WorldMapFramePOI1..N on every map update, so anything that
+-- filters them has to re-apply rather than hide once -- which is the behaviour the filter
+-- assertions drive.
 for i = 1, 3 do
-  local poi = newFrame("Button", "WorldMapFramePOI" .. i, WorldMapPOIFrame)
+  local poi = newFrame("Button", "WorldMapFramePOI" .. i, WorldMapButton)
   poi:SetSize(16, 16)
   poi._texture = poi:CreateTexture(nil, "ARTWORK")
 end
@@ -478,6 +565,25 @@ function WorldMapBlobFrame_CalculateHitTranslations() hitTranslationCalls = hitT
 -- guards the FUNCTION rather than the script -- and that is what this models.
 zoomOutCalls = 0
 function WorldMapZoomOutButton_OnClick() zoomOutCalls = zoomOutCalls + 1 end
+-- `WorldMapFrame_SetMiniMode`, verbatim in shape from WorldMapFrame.lua:2005. The branch is the
+-- point: with no `UIPanelLayout-defined` attribute on the frame it indexes UIPanelWindows directly,
+-- so an addon that cleared that row makes this throw -- which is issue #78.5, reported from the
+-- "movable world map" checkbox in Interface > Objectives. It also hard-sets the window to the
+-- client's own 593x437, which is what the chrome has to undo afterwards.
+miniModeCalls = 0
+function WorldMapFrame_SetMiniMode()
+  miniModeCalls = miniModeCalls + 1
+  if not WorldMapFrame:GetAttribute("UIPanelLayout-defined") then
+    UIPanelWindows["WorldMapFrame"].area = "center"          -- throws if the row was cleared
+    UIPanelWindows["WorldMapFrame"].allowOtherPanels = true
+  else
+    WorldMapFrame:SetAttribute("UIPanelLayout-area", "center")
+    WorldMapFrame:SetAttribute("UIPanelLayout-allowOtherPanels", true)
+  end
+  WorldMapFrame:SetWidth(593)
+  WorldMapFrame:SetHeight(437)
+end
+
 function WorldMap_ToggleSizeDown()
   sizeDownCalls = sizeDownCalls + 1
   WORLDMAP_SETTINGS.size = WORLDMAP_WINDOWED_SIZE
@@ -840,14 +946,39 @@ local bootQuestChecked = WorldMapQuestShowObjectives:GetChecked()
 local bootToggleCalls, bootUpdateCalls = questToggleCalls, questUpdateCalls
 
 ok(WMF._neChromed, "the chrome ran")
-eq(UIPanelWindows.WorldMapFrame, nil, "the map is out of the secure panel row")
--- ...and STAYS out. Both of the client's size toggles rewrite that entry, so clearing it once at
--- boot leaves the panel manager free to start moving the window again on the next size change.
-UIPanelWindows.WorldMapFrame = { area = "center" }
+
+-- OUT OF THE PANEL ROW, ON THE FRAME. The map is detached by declaring its layout on the frame, not
+-- by clearing `UIPanelWindows["WorldMapFrame"]`. `defined` makes GetUIPanelWindowInfo skip the table
+-- entirely; `enabled = false` then makes it return nothing, which is what sends ShowUIPanel down its
+-- plain frame:Show() path and leaves the window ours to place.
+eq(WMF:GetAttribute("UIPanelLayout-defined"), true, "the map declares its own panel layout")
+eq(WMF:GetAttribute("UIPanelLayout-enabled"), false, "...and declares it DISABLED, so no panel "
+   .. "manager claims the window")
+-- AND THE CLIENT'S ROW IS LEFT ALONE, which is the fix for issue #78.5. Clearing it made
+-- `WorldMapFrame_SetMiniMode` throw on `UIPanelWindows["WorldMapFrame"].area`, and tainted a table
+-- the secure panel path reads for EVERY frame, not just this one.
+ok(UIPanelWindows.WorldMapFrame ~= nil, "the client's own UIPanelWindows row is left intact")
+
+-- ...and the detach SURVIVES the client's own mode changes. All three of these rewrite the layout
+-- attributes, so asserting it once at boot would not catch a size toggle handing the window back.
+WMF:SetAttribute("UIPanelLayout-enabled", true)
 WorldMap_ToggleSizeDown()
-eq(UIPanelWindows.WorldMapFrame, nil,
-   "the entry is cleared again after a size toggle puts it back")
-eq(WMF:GetAttribute("UIPanelLayout-enabled"), false, "and its UIPanel layout attribute is cleared")
+eq(WMF:GetAttribute("UIPanelLayout-enabled"), false,
+   "the detach is re-asserted after a size toggle re-enables the layout")
+
+-- THE MOVABLE-MAP CHECKBOX (issue #78.5). Interface > Objectives > "movable world map" runs
+-- WorldMapFrame_ToggleAdvanced -> WorldMapFrame_SetMiniMode, which is the function that indexed the
+-- cleared row. With `defined` on the frame it takes its SetAttribute branch instead and cannot
+-- throw -- and the chrome puts the window back to its own size afterwards rather than leaving it at
+-- the client's 593x437.
+do
+  local miniOK, miniErr = pcall(WorldMapFrame_SetMiniMode)
+  ok(miniOK, "the client's mini-mode runs without indexing a cleared UIPanelWindows row")
+  if not miniOK then print("      " .. tostring(miniErr)) end
+end
+eq(WMF:GetAttribute("UIPanelLayout-enabled"), false,
+   "...the map stays detached through it")
+eq(WMF:GetWidth(), 702, "...and the window is re-sized back to ours, not left at the client's 593")
 ok(UISpecialFrames[1] == "WorldMapFrame", "ESC still closes it (UISpecialFrames)")
 eq(WMF._strata, "DIALOG", "the window sits at DIALOG, like every other window in this addon")
 eq(panelmgrCalls.register, 1, "it joins the shared panel row")
@@ -893,14 +1024,21 @@ local expectScale = math.min((FRAME_W - INSET_L - INSET_R) / 1002, (FRAME_H - SP
 near(WM.canvasScale, expectScale, "the canvas scale is derived from the canvas rect")
 ok(WM.canvasScale ~= WM.clientWindowedSize,
    "and is NOT the scale the client itself was using")
-near(WORLDMAP_SETTINGS.size, WM.canvasScale, "WORLDMAP_SETTINGS.size is written to OUR scale")
--- The identity every mode check on this client asks. Breaking it is what made the first in-game run
--- repaint the whole 1024x768 fullscreen chrome around a 702-wide window.
+-- NEITHER GLOBAL IS WRITTEN, and that is the whole of issue #78.1. Both are read by
+-- `WorldMapFrame_DisplayQuestPOI`, which `WorldMapFrame_UpdateQuests` calls one line before the
+-- PROTECTED `WorldMapBlobFrame:DrawQuestBlob` -- so an addon-written value carries taint into the
+-- client's own function and the protected call is refused in combat: "Interface action failed
+-- because of an AddOn", every time the map opens.
+near(WORLDMAP_SETTINGS.size, 0.588, "WORLDMAP_SETTINGS.size is left at the CLIENT's value")
+eq(WORLDMAP_WINDOWED_SIZE, 0.588, "and so is WORLDMAP_WINDOWED_SIZE")
+-- Which also means the identity every mode check on this client asks holds for free, rather than by
+-- our keeping two globals in step.
 eq(WORLDMAP_SETTINGS.size, WORLDMAP_WINDOWED_SIZE,
-   "...and WORLDMAP_WINDOWED_SIZE moves with it, so the client still believes it is windowed")
-near(WM.clientWindowedSize, 0.588,
-     "the client's ORIGINAL constant is captured before we take the global over")
-ok(poiBoundsCalls > 0, "the POI bounds are re-run after the size write")
+   "...so the client still believes it is windowed, with nothing of ours propping that up")
+near(WM.clientWindowedSize, 0.588, "the client's constant is captured for the conversion below")
+eq(poiBoundsCalls, 0,
+   "WorldMapFrame_SetPOIMaxBounds is NOT called from here -- it writes globals the client reads on "
+   .. "the way to that same protected call, and has nothing left to recompute")
 ok(hitTranslationCalls > 0, "the blob's hit translations are recalculated")
 eq(blob.xRatio, nil, "the blob's cached ratio is cleared so the client recomputes it")
 
@@ -908,8 +1046,228 @@ near(detail:GetScale(), WM.canvasScale, "WorldMapDetailFrame carries the scale")
 near(WorldMapButton:GetScale(), WM.canvasScale, "so does WorldMapButton")
 near(_G.WorldMapFrameAreaFrame:GetScale(), WM.canvasScale, "so does the area frame")
 near(blob:GetScale(), WM.canvasScale, "so does the blob frame")
-eq(_G.WorldMapPOIFrame._scale, nil,
-   "WorldMapPOIFrame is NOT scaled (it inherits from WorldMapButton; scaling it would square it)")
+-- THE CLIENT-SPACE FRAMES. WorldMapPOIFrame and the player arrow are not under the canvas: the
+-- client positions them itself, in their own units, multiplying canvas fractions by
+-- WORLDMAP_SETTINGS.size. Since that constant is now left alone, that conversion has to be undone.
+--
+-- The two frames need OPPOSITE treatment and the difference is easy to get wrong. The POI layer's
+-- contents can be re-placed one by one, so it keeps scale 1 and its markers stay the size the client
+-- drew them; scaling the layer instead put the markers in the right place and blew them up to the
+-- size of the zone (issue #78.4, second round). The arrow is positioned by a C call with nothing to
+-- hook between, so its FRAME must carry the ratio and its model scale divides the zoom back out.
+eq(_G.WorldMapPOIFrame:GetScale(), 1,
+   "the quest-POI layer stays at scale 1, so its markers keep the client's size")
+near(_G.PlayerArrowFrame:GetScale(), WM.canvasScale / WM.clientWindowedSize,
+     "so does the player arrow")
+near(_G.PlayerArrowEffectFrame:GetScale(), WM.canvasScale / WM.clientWindowedSize,
+     "and its effect frame, so the pulse stays under the arrow")
+-- The Model multiplier is DERIVED from that, so the arrow stays 0.88 of the terrain at any size:
+-- frameScale * modelScale = base * canvasScale, hence modelScale = base * clientSize.
+near(_G.PlayerArrowFrame._modelScale, 0.88 * WM.clientWindowedSize,
+     "and the arrow's model scale is the constant that keeps it proportionate to the ground")
+-- The landmark pins are the button's own children and ride the canvas already -- a ratio here would
+-- square the factor and throw every one of them off its landmark.
+eq(_G.WorldMapFramePOI1._scale, nil, "landmark pins are NOT scaled: they ride the canvas already")
+
+-- ...and the markers themselves are re-placed at OUR scale. The client's own call puts them at
+-- `frac * 1002 * WORLDMAP_SETTINGS.size`, which is right for the map it thinks it is drawing.
+do
+  WorldMapFrame_DisplayQuestPOI(_G.WorldMapQuestFrame1)
+  local _, prel, prp, x, y = pointOf(_G.WorldMapQuestFrame1.poiIcon)
+  eq(prel, "WorldMapPOIFrame", "a marker is anchored to the POI layer")
+  eq(prp, "TOPLEFT", "from its top-left corner, as the client does")
+  near(x, 0.25 * 1002 * WM.canvasScale, "and is re-placed at OUR canvas scale, not the client's")
+  near(y, -0.60 * 668 * WM.canvasScale, "in both axes")
+  ok(math.abs(x - 0.25 * 1002 * WORLDMAP_SETTINGS.size) > 1,
+     "...which is a DIFFERENT number from the one the client just wrote")
+
+  -- The clamp the client applies, reproduced in our units rather than through
+  -- WorldMapFrame_SetPOIMaxBounds -- which would write globals the client reads on its way to a
+  -- protected call.
+  WorldMapFrame_DisplayQuestPOI(_G.WorldMapQuestFrame2)
+  local _, _, _, x2, y2 = pointOf(_G.WorldMapQuestFrame2.poiIcon)
+  near(x2, 1002 * WM.canvasScale + 12, "an outlying marker is clamped to the map's own extent")
+  eq(y2, -12, "and to its top edge")
+
+  -- A pooled button the client has since handed to another quest must NOT be dragged along by a
+  -- stale quest frame still holding a reference to it.
+  local stale = { questId = 11, poiIcon = _G.WorldMapQuestFrame2.poiIcon }
+  WM.PlaceQuestPOI(stale)
+  local _, _, _, x3 = pointOf(_G.WorldMapQuestFrame2.poiIcon)
+  near(x3, 1002 * WM.canvasScale + 12, "a recycled marker is left alone by its previous owner")
+end
+
+-- ── issue #78.2: the open-the-map ping ─────────────────────────────────────────────────
+--
+-- THE SCALE IS CORRECTED, NOT THE ANCHOR. The client anchors the ping to the canvas corner with
+-- offsets in CANVAS units, which is only right when the ping's effective scale matches the canvas's
+-- -- and the client itself declares the ping at 0.4. Give it the scale that makes the two agree and
+-- the client's own arithmetic lands, with no per-frame write to lose a race over and no dependency
+-- on any other frame existing.
+--
+-- Two earlier attempts DID fight for the anchor and both failed; the second failed silently because
+-- it needed `WorldMapPlayer`, which this client does not define. The target below is re-derived from
+-- the same two frames the module measures, so a fix that writes a constant or the wrong ratio fails
+-- here rather than in game.
+do
+  ok(not _G.WorldMapPing:IsShown(), "the client's engine-drawn ping is squelched")
+
+  -- The client positions the arrow itself; give it a rect so it is something the ping can sit on.
+  _G.PlayerArrowFrame:SetPoint("CENTER", WMF, "CENTER", 0, 0)
+  ok(WM.PingPlayer(), "firing the ping places one")
+  local ours = WM.ping
+  ok(ours ~= nil, "we build one of our own")
+  -- PARENTED TO THE WINDOW, NOT THE CANVAS, and this is the assertion that matters most in the whole
+  -- block. WorldMapButton is adopted into the magnifier's ScrollFrame, and a Model under a
+  -- ScrollFrame is RENDERED against an origin the frame has already scrolled away from -- so both
+  -- the client's ping and our first attempt at one drew in the wrong hemisphere while their anchors
+  -- were provably correct. PlayerArrowFrame is the control: same widget type, same map, correct,
+  -- and a child of WorldMapFrame.
+  eq(ours:GetParent(), WMF,
+     "parented to the WINDOW -- a Model under the zoom ScrollFrame renders in the wrong place")
+  eq(ours:GetParent(), _G.PlayerArrowFrame:GetParent(),
+     "...the same place the one Model on this map that WORKS is parented")
+  near(ours:GetScale(), WM.effectiveScale,
+       "carrying the canvas scale itself, since it no longer inherits one, so its offsets stay the "
+       .. "client's own two numbers")
+  ok(ours:IsShown(), "and it is up")
+
+  -- A TEXTURE, NOT A MODEL. A Model draws its content at the model file's own origin inside the
+  -- frame, so it can be off the player even with an anchor the diagnostic prints back as exact --
+  -- which is precisely where this ended up before. A texture's position IS its frame's rect.
+  eq(ours:GetObjectType(), "Frame", "it is a plain frame with a texture, not a Model")
+  ok(WM.pingArt ~= nil, "and its art resolved to something this client actually has")
+  eq(ours.tex:GetTexture(), WM.pingArt, "which is what the texture is showing")
+
+  -- Gold, and BRIGHT via a second additive pass rather than via the colour -- these blend ADD, so the
+  -- vertex colour is already at its ceiling and the only way further up is another layer. Every
+  -- layer has to carry the same art and the same colour, or the second one dims the first instead of
+  -- doubling it.
+  do
+    local layers = 0
+    for _, r in ipairs(ours._regions or {}) do
+      if r._file then
+        layers = layers + 1
+        eq(r._file, WM.pingArt, "every ping layer shows the resolved art")
+        local cr, cg, cb = unpack(r._vertex or {})
+        eq(cr, 1.0, "...at full red")
+        eq(cg, 0.84, "...gold green")
+        eq(cb, 0.10, "...and almost no blue, which is what makes it gold rather than cream")
+      end
+    end
+    eq(layers, 2, "and there are two of them, which is where the extra brightness comes from")
+  end
+
+  -- ...AND ABOVE THE MAP. Leaving the canvas cost the ping the frame level it used to inherit from
+  -- WorldMapButton: a new child of WorldMapFrame starts at ITS level, which is the bottom of this
+  -- window's stack, so the tiles painted straight over it. Correctly placed and invisible is a
+  -- worse failure than misplaced, because nothing about it looks wrong.
+  ok(ours:GetFrameLevel() > WorldMapDetailFrame:GetFrameLevel(),
+     "lifted above the canvas, or the map tiles paint straight over it")
+  ok(ours:GetFrameLevel() > _G.WorldMapPOIFrame:GetFrameLevel(),
+     "...and above the pin layer")
+  ok(ours:GetFrameLevel() < WMF._neBorder:GetFrameLevel(),
+     "...but below the chrome, so a pulse at the map edge goes under the frame, not over it")
+
+  -- ON THE ARROW, which is the whole point: the arrow is the one marker on this map already known to
+  -- be right, and it is what the bug was reported against. Deriving the player's position a second
+  -- time put the pulse a few pixels off it, because the client places the arrow through a different
+  -- unit conversion at a different frame scale and the two only agree algebraically.
+  local pp, prel, prp, px, py = pointOf(ours)
+  eq(pp, "CENTER", "anchored by its centre")
+  eq(prel, _G.PlayerArrowFrame, "to the PLAYER ARROW, not to a second derivation of its position")
+  eq(prp, "CENTER", "centre to centre")
+  eq(px, 0, "at zero offset, so neither frame's scale can put the pulse off the arrow")
+  eq(py, 0, "in both axes")
+
+  -- It re-places every tick rather than once when fired, so the arrow moving under it takes the ping
+  -- along.
+  ours:Fire("OnUpdate", 0.016)
+  local _, prel2 = pointOf(ours)
+  eq(prel2, _G.PlayerArrowFrame, "and it re-asserts that every tick")
+
+  -- FALLBACK: a build with no arrow frame to sit on still gets a ping, derived the long way. This is
+  -- the only assumption left in the ping, and assuming a widget exists is what cost two rounds on
+  -- WorldMapPlayer -- so the path that runs without one is held here rather than hoped for.
+  _G.PlayerArrowFrame:ClearAllPoints()          -- no rect => GetCenter() is nil, as in a real client
+  playerMapX, playerMapY = 0.75, 0.20
+  ok(WM.PingPlayer(), "with no arrow to sit on, a ping is still placed")
+  local _, frel, frp, fx, fy = pointOf(ours)
+  eq(frel, _G.WorldMapDetailFrame, "...derived against the canvas instead")
+  eq(frp, "TOPLEFT", "from its top-left corner, as the client does")
+  near(fx, 0.75 * 1002, "at the player's map position across")
+  near(fy, -0.20 * 668, "and down")
+  _G.PlayerArrowFrame:SetPoint("CENTER", WMF, "CENTER", 0, 0)
+
+  -- Hold, then fade, then gone -- the client's own shape.
+  ours:Fire("OnUpdate", 0.5)
+  eq(ours:GetAlpha(), 1, "it holds at full alpha for the first second")
+  ours:Fire("OnUpdate", 1.0)
+  ok(ours:GetAlpha() < 1 and ours:GetAlpha() > 0, "then fades")
+  ours:Fire("OnUpdate", 10)
+  ok(not ours:IsShown(), "and hides itself when the fade is done")
+
+  -- ART IS RESOLVED BY READING IT BACK, not assumed. A SetTexture the client cannot resolve fails
+  -- quietly and leaves the texture as it was, so a candidate list that does not clear between tries
+  -- reports the FIRST path as a success forever. Knock the preferred one out and the next must win.
+  do
+    local first = WM.pingArt
+    _G._missingPaths[first:lower()] = true
+    WM.ping = nil                      -- force a rebuild through the candidate list
+    ok(WM.PingPlayer(), "a ping is still placed when the preferred art is absent")
+    ok(WM.pingArt ~= nil, "...it falls through to another candidate")
+    ok(WM.pingArt ~= first, "...a DIFFERENT one, not the missing path reported as resolved")
+    eq(WM.ping.tex:GetTexture(), WM.pingArt, "and the texture is showing that one")
+    _G._missingPaths[first:lower()] = nil
+  end
+
+  -- A player who is not on this map at all: the client's own (0,0) test.
+  playerMapX, playerMapY = 0, 0
+  ok(not WM.PingPlayer(), "a player off this map does not get a ping")
+  playerMapX, playerMapY = 0.31, 0.62
+
+  -- THE CLIENT'S OWN `MinimapPing.mdx` IS NOT AN OPTION, and that is a tested result: it was tried
+  -- under the canvas, under the window, with the full SetCamera/SetPosition/SetFacing init the
+  -- client gets from InitWorldMapPing, and at frame scale 1 with the canvas scale on SetModelScale
+  -- (Mapster's rule for the arrow). Every one of those rendered off the player while the FRAME's
+  -- anchor was exact by construction. A Model's content does not land on its frame here.
+  --
+  -- This is the assertion that stops it being tried a fifth time. Nothing here can prove a Model
+  -- renders wrongly -- an offline harness has no renderer -- so what it holds instead is the
+  -- decision: this ping is a texture.
+  eq(WM.ping:GetObjectType(), "Frame",
+     "the ping is a texture, never a Model -- MinimapPing.mdx was tried four ways and never landed")
+
+  -- THE ENGINE'S OWN PING, HANDED BACK. `InitWorldMapPing` binds the pulse to a frame, and the
+  -- client binds it to WorldMapFrame -- which is why Mapster's map works (its canvas is always at
+  -- WORLDMAP_SETTINGS.size relative to that frame, so the engine's assumption holds) and this one
+  -- does not (its canvas is scaled inside a pixel-perfect frame, so the engine draws at 0.57/1.28 of
+  -- the right offset). Re-binding it to the canvas is the one lever that could make the STOCK ping
+  -- correct here without touching WORLDMAP_SETTINGS or rebuilding the window.
+  do
+    local reboundTo
+    _G.InitWorldMapPing = function(frame) reboundTo = frame end
+    NE.db.worldmap.pingClient = true
+    ok(WM.RebindClientPing(), "with the flag set, the ping is handed back to the engine")
+    eq(reboundTo, _G.WorldMapButton,
+       "...re-bound to the CANVAS, where the scale ratio the engine assumes is 1")
+    -- Un-SQUELCHED, not shown: the squelch is what keeps it down, and the client's own
+    -- WorldMapFrame_PingPlayerPosition is what raises it. Restoring makes it showable again.
+    ok(not NE.squelch.IsSquelched(_G.WorldMapPing),
+       "and the client's ping is un-squelched, since it is doing the work again")
+
+    NE.db.worldmap.pingClient = nil
+    ok(not WM.RebindClientPing(), "without the flag it is left alone")
+    WM.pingRebound = nil
+    _G.InitWorldMapPing = nil
+  end
+
+  -- SHIPPED ART IS A DROP-IN. The first candidate is an addon-local path, so putting a BLP there is
+  -- the whole of the work; until one exists it fails to resolve and the list falls through, which is
+  -- why the art is resolved by reading it back rather than by assuming.
+  eq(WM.PING_ART[1], [[Interface\AddOns\DragonUI_NewEra\Textures\WorldMap\ping.blp]],
+     "...and its first art candidate is an addon-local path, so shipping ping art needs no code")
+end
 
 -- WHERE THE MAP IS ANCHORED MOVED, deliberately. It used to hang off the window with its offsets
 -- divided by its own scale; now the magnifier's clipping viewport carries the insets and the canvas
@@ -1450,15 +1808,38 @@ P.detail.back:Fire("OnClick")
 ok(not P.detailShown, "Back returns to the list")
 ok(P.frame.scroll:IsShown(), "and the list is visible again")
 
--- ── geometry defers out of combat ───────────────────────────────────────────
+-- ── only the PROTECTED frame defers ─────────────────────────────────────────
+--
+-- This used to assert the opposite: that the whole geometry pass waited for combat to end, because
+-- WorldMapBlobFrame is protected. It is -- but it is the only protected thing the pass touches, and
+-- holding everything else back with it meant maximize and minimize did nothing at all in combat.
+-- The mode flipped and the quest panel opened or closed, but the window never resized, so two
+-- clicks left the player exactly where they started.
 
 print("== combat deferral ==")
 inCombat = true
-local widthBefore = WMF:GetWidth()
-WM.SetMaximized(true, false)
-eq(WMF:GetWidth(), widthBefore, "no geometry is written in combat (the blob frame is protected)")
-flushCombat()
-ok(WMF:GetWidth() > widthBefore, "and it lands the moment combat ends")
+do
+  local widthBefore = WMF:GetWidth()
+  local blobScaleBefore = _G.WorldMapBlobFrame:GetScale()
+  WM.SetMaximized(true, false)
+  ok(WMF:GetWidth() > widthBefore, "the window DOES resize in combat -- maximize is not a dead click")
+  eq(_G.WorldMapBlobFrame:GetScale(), blobScaleBefore,
+     "...but the protected blob frame is not touched until combat ends")
+  flushCombat()
+  near(_G.WorldMapBlobFrame:GetScale(), WM.canvasScale,
+       "and the blob catches up the moment it does")
+
+  -- ...and back down again, which is the half the report was actually about.
+  local maxWidth = WMF:GetWidth()
+  inCombat = true
+  WM.SetMaximized(false, false)
+  ok(WMF:GetWidth() < maxWidth, "minimize resizes in combat too")
+  inCombat = true
+  WM.SetMaximized(true, false)
+  near(WMF:GetWidth(), maxWidth, "and maximizing again in the same fight puts it back")
+  flushCombat()
+  WM.SetMaximized(false, false)
+end
 
 -- ── resizing ──────────────────────────────────────────────────────
 --
@@ -1477,6 +1858,16 @@ local grip = WM.sizeGrip
 ok(grip ~= nil, "there is a resize grip")
 ok(grip:GetFrameLevel() > WMF._neBorder._neTitleBand:GetFrameLevel(),
    "and it outranks the chrome, like the other corner controls")
+
+-- ISSUE #78.6. The grip's tooltip is the only place in this file that reads a localised string, and
+-- the module never bound `L` -- so hovering the corner threw "attempt to index global 'L'" every
+-- time and the drag-to-resize hint was never seen. Firing the script is what catches it: a missing
+-- upvalue is a runtime fault, not a syntax one, and nothing else here touches that handler.
+do
+  local tipOK, tipErr = pcall(function() grip:Fire("OnEnter") end)
+  ok(tipOK, "hovering the grip shows its tooltip rather than throwing on a missing local")
+  if not tipOK then print("      " .. tostring(tipErr)) end
+end
 
 -- The invariant: whatever the width, the window is always the shape the map fills exactly.
 local function assertNoLetterbox(what)
@@ -2198,8 +2589,13 @@ local function cursorOffMap()  putCursor(-2.0, 0.5) end
 ok(CZ.viewport ~= nil and CZ.content ~= nil, "a viewport and a content frame are built")
 eq(WorldMapDetailFrame:GetParent(), CZ.content, "the detail frame moves into the content frame")
 eq(WorldMapButton:GetParent(), CZ.content, "so does the button")
-eq(_G.WorldMapPOIFrame:GetParent(), WorldMapButton,
-   "and WorldMapPOIFrame stays under the button, so every pin is carried along for free")
+eq(_G.WorldMapFramePOI1:GetParent(), WorldMapButton,
+   "the landmark pins are carried along under the button for free")
+-- ...but the QUEST-POI layer is not under the button and has to be adopted in its own right, or the
+-- markers are neither clipped nor positioned. Modelling it as the button's child is what hid
+-- issue #78.4.
+eq(_G.WorldMapPOIFrame:GetParent(), CZ.content,
+   "and WorldMapPOIFrame is adopted in its own right, since it is NOT under the button")
 
 -- THE ONE FRAME THAT MUST NOT MOVE. WorldMapBlobFrame is protected: reparenting it risks taint and
 -- is impossible in combat. It is squelched while zoomed instead, which is the agreed trade.
@@ -2215,6 +2611,22 @@ local c0, z0 = GetCurrentMapContinent(), GetCurrentMapZone()
 ok(WZ.OnWheel(1), "wheel up magnifies")
 ok(CZ.Level() > 1.0, "the zoom level rises")
 ok(CZ.content:GetWidth() > content0, "the content frame grows past the viewport")
+
+-- ISSUE #78.4, AND THE REASON THE MAGNIFIER NEEDED THE CLIENT-SPACE RATIO AT ALL. The client
+-- converts each quest marker's canvas fraction with WORLDMAP_SETTINGS.size, which does not know
+-- about zoom -- so the POI layer's own scale is the only thing that can carry it. Get this wrong by
+-- a factor of the zoom level and the markers scatter across parts of the map with nothing to do
+-- with the quest, which is exactly what was reported.
+-- The markers are re-placed by OFFSET, not by the layer's scale -- so the zoom has to reach them
+-- through the geometry pass. It does, because CZ.SetLevel runs one.
+do
+  local _, _, _, qx = pointOf(_G.WorldMapQuestFrame1.poiIcon)
+  near(qx, 0.25 * 1002 * WM.canvasScale * CZ.Level(),
+       "a quest marker's offset tracks the ZOOM, not just the window size")
+  eq(_G.WorldMapPOIFrame:GetScale(), 1, "while the layer itself stays at scale 1, so it stays legible")
+end
+near(_G.PlayerArrowFrame:GetScale(), WM.canvasScale * CZ.Level() / WM.clientWindowedSize,
+     "and so does the player arrow, so it stays on the player's spot while magnified")
 eq(WMF:GetWidth(), w0, "the WINDOW does not resize -- that is the corner grip's job, not the wheel's")
 eq(WMF:GetHeight(), h0, "in either axis")
 eq(#zoomCalls, 0, "and it never navigates: SetMapZoom is not called")

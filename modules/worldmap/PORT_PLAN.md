@@ -10,14 +10,97 @@ Chrome, breadcrumb, pin restyle and the quest-log side panel are in, plus `core/
 `core/MaxMin.lua` and the `RIVALS.WORLDMAP` row. `qa/offline/test_worldmap.lua` passes (338
 assertions) and `qa/staticcheck.ps1` PASSes with the TOC block in.
 
+> **⚠ TWO INSTRUCTIONS IN THIS DOCUMENT ARE NOW WRONG, and both were reported from the game as
+> issue #78.** Read this before §5.3, §6 or the frame inventory, all of which still describe the
+> superseded approach:
+>
+> * **Do NOT clear `UIPanelWindows["WorldMapFrame"]`** (superseding deviation 1 below, §3's open
+>   question, and §6). `WorldMapFrame_SetMiniMode` indexes that row directly unless the frame carries
+>   a `UIPanelLayout-defined` attribute, so clearing it made the "movable world map" checkbox throw
+>   `WorldMapFrame.lua:2009: attempt to index field 'WorldMapFrame' (a nil value)`; it also taints a
+>   table the secure panel path reads for every frame in the UI, not just this one. The map is
+>   detached by declaring `UIPanelLayout-defined = true` and `UIPanelLayout-enabled = false` on the
+>   frame instead, which is both invisible to the client and confined to this window.
+> * **Do NOT write `WORLDMAP_SETTINGS.size` or `WORLDMAP_WINDOWED_SIZE`, and do not call
+>   `WorldMapFrame_SetPOIMaxBounds`** (superseding §5.3, §7.3 and the constants list). All three
+>   values are read by `WorldMapFrame_DisplayQuestPOI`, which `WorldMapFrame_UpdateQuests` calls one
+>   line before the PROTECTED `WorldMapBlobFrame:DrawQuestBlob` — so an addon-written value carries
+>   taint into the client's own function and the protected call is refused in combat, which is what
+>   made the map unopenable mid-fight. The client keeps its constant; the two frames it positions in
+>   its own units (`WorldMapPOIFrame` and `PlayerArrowFrame`/`PlayerArrowEffectFrame`) carry the
+>   ratio `canvasScale / WORLDMAP_WINDOWED_SIZE` instead. That also fixed quest markers flying off
+>   the map under magnification, which the old approach could not express.
+>
+> **§5.1's combat rule is also narrower than it says.** `WorldMapBlobFrame` is protected and its
+> `SetScale` (plus the hit-translation recalculation) must wait for `PLAYER_REGEN_ENABLED` — but it
+> is the *only* protected frame the geometry pass touches, and deferring the whole pass with it meant
+> the window could not be resized at all in combat: maximize and minimize flipped the mode and closed
+> or opened the quest panel, then left the window at its old size. `WM.ApplyGeometry` runs
+> immediately now; only the blob writes defer. The unprotected surface it exercises in combat
+> (`WorldMapFrame:SetWidth/SetHeight`, `SetScale` on the detail frame, button and area frame,
+> `SetPoint` on the detail frame) is the same set Mapster drives from a user click.
+>
+> **A `Model` under the magnifier'''s ScrollFrame is RENDERED IN THE WRONG PLACE, however correct its
+> anchor is.** This cost four rounds on the player ping and is the single most useful thing on this
+> page. 3.3.5a has no `SetClipsChildren`, so `CanvasZoom` adopts the canvas frames into a ScrollFrame
+> (`NE_WorldMapZoomContent`) to clip them -- and a Model renders through a separate 3D pass that does
+> not honour that frame'''s render offset, so it draws against an origin the frame has already
+> scrolled away from. `WorldMapPing` is a child of `WorldMapButton`, which is adopted, so the pulse
+> landed nowhere near the player; re-anchoring it, winning the per-frame race for that anchor, and
+> correcting its scale all changed nothing, and neither did building our own Model in the same place.
+> `PlayerArrowFrame` is the control -- same widget type, same map, correct, and a child of
+> `WorldMapFrame`, outside the viewport. So `WorldMapPing` is squelched and `WM.PingPlayer` builds a
+> ping of its own parented to `WorldMapFrame` and anchored CENTER-to-CENTER **on the arrow itself**
+> at zero offset -- the arrow being the one marker on this map already known to be right, so nothing
+> is derived twice.
+>
+> **It is a TEXTURE, not a Model, and that is the headline.** Reusing `MinimapPing.mdx` was the
+> obvious move and three separate Model properties broke it in turn: the ScrollFrame render offset
+> above; the frame level (a new child starts at its PARENT's level, and WorldMapFrame is the bottom
+> of this window's stack at 87, against 88 for the canvas, 100 for the pins and 137 for the chrome,
+> so it was painted over by the map tiles while being perfectly placed); and finally the model file's
+> own origin, which kept the pulse off the player even with an anchor the diagnostic printed back as
+> exact. A texture's position IS its frame's rect -- no second render pass, no camera, no model
+> space. **Do not use a `Model` for anything that has to land on a specific point of this map**, never
+> adopt one into the zoom viewport, never assume one is drawn where its anchor says, and give
+> anything moved out of the canvas an explicit frame level on the way. Its art is resolved by setting
+> each candidate path and reading it back, because a SetTexture the client cannot resolve fails
+> quietly. `db.worldmap.pingModel` opts back into `MinimapPing.mdx` for anyone who wants to retry the
+> real art -- the Model build now does the full `SetModel`/`SetCamera`/`SetPosition`/`SetFacing`
+> initialisation the first attempt skipped, which the client gets for free from `InitWorldMapPing`
+> and may be the whole reason that attempt failed. It is opt-in because Lua cannot check the answer.
+>
+> **The Model rule comes from Mapster, and so does the reason this window fights the client at all.**
+> Mapster carries *no ping code whatsoever* -- because it never puts a non-stock scale on the canvas:
+> it sets `WorldMapDetailFrame`/`Button`/`AreaFrame`/`Blob` to the client's own
+> `WORLDMAP_WINDOWED_SIZE` and does every resize by scaling the whole `WorldMapFrame`
+> (Mapster.lua:387-390, `Mapster:SetScale`, and Scaling.lua's drag). Every child keeps its shipped
+> relationship, so the engine's ping, arrow and POI maths all stay correct for free. This port cannot
+> take that approach wholesale -- its canvas is deliberately a different size from its frame, which is
+> the entire point of the chrome -- but that is *why* the ping, the POI layer and the arrow each
+> needed hand-holding here and need none in Mapster. The transferable rule:
+> **`SetModelScale` on a Model, never `SetScale`** (Mapster.lua:503). A texture honours frame scale;
+> a Model does not render by it. Note also that this client defines no `WorldMapPlayer`, despite
+> WorldMapFrame.xml declaring one -- do not build anything on it.
+>
+> The frame inventory below also has `WorldMapPOIFrame` in the wrong place: it is a **sibling of
+> `WorldMapDetailFrame` under `WorldMapFrame`, at scale 1**, not a child of `WorldMapButton`. Only
+> the landmark pins (`WorldMapFramePOI1..N`) are the button's children. Note that the ratio goes on
+> the **arrow only**: the POI layer stays at scale 1 and its markers are re-placed one by one
+> (`placeQuestPOI`), because scaling that layer magnifies the markers themselves along with their
+> offsets. `modules/worldmap/WorldMap.lua`
+> (`applyClientSpaceScale`) is the authority on all of this.
+
 **Three decisions were taken against what this plan first said**, each on evidence found while
 building, and each recorded where the code is rather than only here:
 
-1. **The map is taken OUT of `UIPanelWindows`** (§3 Phase 1 recommended leaving it in). This
-   client's windowed-map geometry is entangled with that entry — it rewrites the table on every
-   size toggle — and Mapster, the one addon demonstrably re-homing this frame on 3.3.5a, clears it.
-   The window is now placed the way every other window in this addon is: `PersistWindowPosition`
-   for the player's own spot, `NE.panelmgr` for the shared row, `EscClose` for ESC.
+1. **The map is taken OUT of `UIPanelWindows`** (§3 Phase 1 recommended leaving it in) — ***but see
+   the correction above: it is taken out ON THE FRAME, and the client's table row is left intact.***
+   This client's windowed-map geometry is entangled with that entry — it rewrites the table on every
+   size toggle — and Mapster, the one addon demonstrably re-homing this frame on 3.3.5a, clears it
+   outright. Clearing it is what issue #78.5 came from. The window is placed the way every other
+   window in this addon is: `PersistWindowPosition` for the player's own spot, `NE.panelmgr` for the
+   shared row, `EscClose` for ESC.
 2. **`core/NavBar.lua` was not created at first, and then was** (§3 Phase 2 proposed promoting the
    Encounter Journal's breadcrumb into core). The original call — that it was a refactor of a
    shipped feature no offline harness covered — was reversed once the cost of the alternative
