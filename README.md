@@ -246,7 +246,7 @@ Optional — nothing here is required, and each is detected at runtime. Install 
 | **Auctionator** | Auction House | An AH scan button in the profession window, and a full embed + reskin of its Buy/Sell/More panel inside the Auction House window. | https://github.com/Intervence/AuctionatorPlus |
 | **What's Training?** | Spellbook | An **Upcoming** tab in the spellbook listing what your class trainer offers — grouped by available / missing requirements / next level, with cost and level on each card. | https://github.com/thezephyrsong/Whats-Training-WotLK |
 | **Deadly Boss Mods** | Boss Timers | Allows retail timer skinning to actually have timers | https://github.com/5Buttons/DBM-Chromiecraft |
-| **Details! Damage Meter** | Damage Meter Skin | A **New Era** skin for Details!, built from retail's own damage-meter art: gold-titled header bar, class-coloured bars on a near-invisible panel, K/M numbers. Registers itself in Details!' skin list; apply it from the options tab or `/nedetails`. | https://github.com/Bunny67/WeakAuras-WotLK |
+| **Details! Damage Meter** | Damage Meter Skin | A **New Era** skin for Details!, built from retail's own damage-meter art: gold-titled header bar, class-coloured bars on a near-invisible panel, K/M numbers. Registers itself in Details!' skin list; apply it from the options tab or `/nedetails`. | https://github.com/Bunny67/Details-WotLK |
 
 ## Credits
 
