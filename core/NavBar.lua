@@ -2,12 +2,13 @@
 --
 -- WHY THIS EXISTS. Era ships `NavBarTemplate` in FrameXML byte-identical to retail's, so NewEra's
 -- own navbars are three lines of instantiation. 3.3.5a ships nothing, so it has to be rebuilt — and
--- it got rebuilt TWICE here: once for the Adventure Guide and again for the world map. The second
--- copy promptly re-introduced two faults the first had already fixed and documented thirty lines
--- away — the Home crumb sitting on top of the window's portrait, and crumbs invisible underneath
--- their own bar's regions — which is exactly the argument for not having two copies. This file is
--- the Encounter Journal's implementation, which was the better of the two, lifted into core with
--- the model handed in by the caller.
+-- it got rebuilt TWICE here: once for the Adventure Guide and again for a second window (the world
+-- map, since removed — base DragonUI owns that frame now). The second copy promptly re-introduced
+-- two faults the first had already fixed and documented thirty lines away — the Home crumb sitting
+-- on top of the window's portrait, and crumbs invisible underneath their own bar's regions — which
+-- is exactly the argument for not having two copies. This file is the Encounter Journal's
+-- implementation, which was the better of the two, lifted into core with the model handed in by
+-- the caller.
 --
 -- WHAT THE CALLER OWNS: the TRAIL. `opts.trailFunc` returns an ordered list of
 --     { name = <label>, OnClick = <function>, listFunc = <function returning an EasyMenu list> }
@@ -158,9 +159,9 @@ local CRUMB_H        = 24
 -- Padding is TWO independent decisions, not one three-way choice, and collapsing them into one is a
 -- bug that only shows up on a crumb that is both. The Adventure Guide's Home never carries a
 -- dropdown, so `isHome and HOME_PAD or (hasArrow and ARROW_PAD or PLAIN_PAD)` was correct there for
--- as long as it was the only caller. The world map's Home DOES carry one — its menu is the list of
--- continents — and the `isHome` branch won, so the crumb was sized with no room for the ▾ and the
--- glyph landed on top of the word "World".
+-- as long as it was the only caller. The second caller's Home DID carry one, the `isHome` branch
+-- won, and the crumb was sized with no room for the ▾ — the glyph landed on top of the word. Any
+-- future caller with a dropdown on Home hits the same thing, so the two pads stay independent.
 local ARROW_EXTRA = ARROW_PAD - PLAIN_PAD   -- what a ▾ costs, whatever the base pad is
 
 local function crumbWidth(isHome, hasArrow, textW)
@@ -169,11 +170,6 @@ local function crumbWidth(isHome, hasArrow, textW)
   return textW + pad
 end
 
--- How much room the trail has. A bar pinned left and right into a parent has no explicit width, and
--- this client does not resolve an anchored rect until its next layout pass — so the first refresh,
--- which runs during the build, can legitimately measure 0. Returning there is how the world map's
--- breadcrumb shipped empty: a bar with a plate and nothing on it. `opts.fallbackWidth` lets the
--- caller name a frame that IS sized by then.
 -- How much room the trail has.
 --
 -- `opts.widthFunc` WINS over measuring the frame, and that order matters. A bar pinned left and
@@ -181,8 +177,8 @@ end
 -- until its next layout pass -- so on the pass right after the window is resized, `bar:GetWidth()`
 -- still reports the width it had BEFORE. Trusting it meant the backing plate kept the old window's
 -- size: after minimising, a black band running out past the window's right edge; after maximising,
--- one stopping short of it. A caller that knows the width from its own model has no such lag, and
--- the world map does (WM.CurrentCanvasWidth is the single number its whole geometry is built on).
+-- one stopping short of it. A caller that knows the width from its own model has no such lag; a
+-- resizable window that drives its geometry off one number should hand that number in here.
 --
 -- Measuring the frame stays as the fallback, for a caller with a fixed width and nothing to declare
 -- -- which is the Adventure Guide, whose bar is SetWidth'd outright.
@@ -482,7 +478,7 @@ end
 --                  measuring the frame, which lags a resize by a layout pass (see availableWidth).
 --
 -- The caller anchors and sizes the frame itself — a fixed width (the Adventure Guide) and a
--- left-and-right pin (the world map) are both fine.
+-- left-and-right pin into a resizable parent are both fine.
 function NB.Create(parent, opts)
   if not parent then return nil end
   opts = opts or {}

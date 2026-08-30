@@ -202,19 +202,6 @@ The vendor window in the same chrome as the rest of the set, laid out against re
 - **Sell all junk** — retail's one-click button. It desaturates when there is nothing to sell, and always asks before it sells. Only poor-quality items the vendor will actually pay for, never quest items.
 - **Buyback undo** — retail's undo arrow on the buyback slot, greyed out when there is nothing to buy back.
 
-### World Map
-
-![World Map](screenshots/worldmap.png)
-
-- **Drag to resize**, and it remembers the size. The maximize button switches between two windows that each keep their own size and their own quest-log state — the small one opens without the quest log, the large one with it. Resizing adjusts whichever you are in and leaves the other alone.
-
-- **The quest log, as a side panel** — retail's combined Map & Quest Log. The panel *extends* the window rather than covering the map, so opening it never shrinks what you are looking at. Zone headers collapse, quests colour by difficulty, a checkbox on each row tracks it, and a search box filters the list (dropping any header left with nothing under it). Clicking a quest draws its objective area on the map and opens a detail pane — description, live objectives, reward and choice items with the client's own tooltips, money and XP — with Back, Track, Abandon and Share.
-- **Fog of war, greyed rather than gone** — unexplored ground is drawn tinted and half-transparent instead of left black, so you can see what a zone actually looks like before you have walked it. It builds up account-wide as you play: anywhere *any* of your characters has been shows on all of them. Switch it off live from the map's filter button.
-- **Scroll to magnify** — the wheel zooms the canvas up to 4x, anchored on the cursor so whatever you leaned in to look at stays under it. Right-drag to move around; the zoom returns to fit when you change map or close the window. On an HD map patch this uncovers real detail rather than enlarging pixels, since those ship 1024px tiles the client draws at 256px. Quest-area shading is hidden while magnified.
-- **A filter button** — retail's filter control in the canvas corner: quest objectives, landmark pins and explored areas each switch on and off from it. Changes apply immediately and are remembered per account.
-
-**It stands down when Mapster is installed** (or Carbonite, Leatrix Maps, MetaMap, Cartographer). Those addons take ownership of the same frame and two cannot share it, so this module reports as conflicted in the options and never boots — with the usual per-module override if you want this one instead.
-
 ## Roadmap
 
 Faithfully downporting the remaining NewEra panels to 3.3.5a:
@@ -233,8 +220,7 @@ Faithfully downporting the remaining NewEra panels to 3.3.5a:
 - [x] ~~**Boss Timers**~~ — *done* (retail's encounter timeline + warning tiers over DBM's event bus: rail or bar view, imminent glow/grow/blink, three placeable warning tiers, DBM display suppression with orphan-bar adoption; requires DBM)
 - [ ] **Bags** — *work in progress* (retail combined bag + individual-bag restyle: grid, smart sort, separated specialty-bag sections, keyring row, rarity/usable cues, money + currency band)
 - [x] ~~**Merchant**~~ — *done* (modern chrome/portrait/tabs on the vendor window, laid out against retail's own frame: recessed grid, retail row art with rarity-coloured names and quest-starter bangs, retail's two-row bottom bar, a sell-all-junk button with confirmation and the buyback undo arrow)
-- [x] ~~**World Map**~~ — *done* (modern chrome/portrait on the world map with a maximize toggle, a breadcrumb replacing the three dropdowns and the dungeon-floor selector, and the quest log as a side panel that extends the window: collapsible zone headers, tracking, search, quest blobs and a detail pane with rewards; stands down when Mapster or another map addon is installed)
-- [ ] **Quest Log** — *the map's side panel covers this; the standalone `QuestLogFrame` is still stock*
+- [ ] **Quest Log**
 - [ ] **Mail**
 
 ## Compatible with
@@ -260,3 +246,4 @@ Optional — nothing here is required, and each is detected at runtime. Install 
 ## Modules removed as now part of DragonUI
 - **Character Panel**
 - **Collections tab**
+- **World Map**

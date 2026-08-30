@@ -6,8 +6,8 @@
 --
 -- **That implementation now lives in core/NavBar.lua**, unchanged in behaviour, and this file is
 -- what is left once the widget moves out: the TRAIL (Home > Instance ▾ > Boss), the boss-jump
--- dropdown, and the search box. The move happened because the world map rebuilt the same widget a
--- second time and re-introduced two faults this file had already fixed and documented — the Home
+-- dropdown, and the search box. The move happened because a second window rebuilt the same widget
+-- from scratch and re-introduced two faults this file had already fixed and documented — the Home
 -- crumb sitting on the window's portrait, and crumbs drawn underneath their own bar. The art
 -- measurements, the colour rule, the crop-and-stretch treatment and the reasoning behind all three
 -- moved with the code; core/NavBar.lua's header is now where they live.
@@ -15,8 +15,8 @@
 -- Public surface is unchanged, because EncounterJournal.lua and EncounterPage.lua call it from five
 -- places: `NE.ej.BuildNavBar(f)`, `NE.ej.RefreshNavBar()`, and `f._neSearchBox`.
 --
--- SEARCH stays here rather than in core: it is not part of a breadcrumb, it filters the instance
--- grid, and the world map's own search box lives on its quest panel instead.
+-- SEARCH stays here rather than in core: it is not part of a breadcrumb, and it filters the
+-- instance grid. A second caller's search box would sit somewhere else on its own window.
 
 local NE = DragonUI_NewEra
 if not NE then return end

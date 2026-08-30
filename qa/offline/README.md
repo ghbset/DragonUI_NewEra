@@ -150,39 +150,6 @@ the next layout, so `GetHeight()` right after a parent resize hands back the old
 stub passed a build whose model measured the interior at that exact moment and came out 88px too
 tall in game.
 
-Exercise the world map port (121 assertions) — the geometry, the suppression, the breadcrumb, the
-quest list and the side panel:
-
-```bash
-luajit qa/offline/test_worldmap.lua
-```
-
-This one matters more than most, because `modules/worldmap` is the only module in this addon that is
-a **rebuild** rather than a downport: there is no 1.15 source to diff against when a result comes out
-wrong. The stubbed frame tree is the real 3.3.5a world map (Interface 30300), cross-checked against
-Mapster 1.3.9 — an addon that re-homes the same frame on the same client, and therefore ground truth
-for which globals exist and which of them carry a scale of their own.
-
-Four stub details are load-bearing:
-
-- **`CreateFrame` returns a SHOWN frame**, as the client does. The breadcrumb lays itself out from
-  `refresh()`, which is gated on `bar:IsShown()`; a stub that defaults to hidden silently builds a
-  one-crumb trail and every navigation assertion passes vacuously.
-- **`GetWidth()` resolves anchor spans.** A frame pinned TOPLEFT + TOPRIGHT into a sized parent has
-  no explicit width and the client works it out. The navbar is exactly that shape and its whole
-  layout is driven off `GetWidth`, so a stub returning 0 makes it draw nothing.
-- **`Set*Texture` takes a path OR an object, and `Get*Texture` always returns a TEXTURE.** That
-  asymmetry is why `core/MaxMin.lua` seeds each state from a path and then crops through the handle
-  — the repo has evidence for both behaviours (`modules/spellbook` passes objects and works,
-  `core/PanelChrome` records objects silently no-opping), and the path form is correct under both.
-- **`WorldMap_ToggleSizeDown` re-Shows the client's chrome**, as the real one does. That is the
-  whole reason `core/Squelch.lua` exists, and the test asserts the chrome stays hidden across it.
-
-It also found the port's one real bug before the game did: `safe()` packed `pcall`'s results and
-unpacked from index 2, which loses arity — `#{...}` stops at the first `nil`, and
-`GetQuestLogTitle` returns a nil `suggestedGroup` in the *middle* of its list, so every quest read
-as a non-header with no complete and no daily flag.
-
 ## What test_boot.lua stubs
 
 A minimal widget API (`CreateFrame`, textures, font strings, scripts, events) plus the 3.3.5a game

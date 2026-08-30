@@ -7,9 +7,9 @@
 -- window squelches regions one at a time — which works but means every module carries the same
 -- few lines.
 --
--- The world map is the case that forces a shared helper: `WorldMap_ToggleSizeUp/Down` re-Shows
--- the mini borders, the title, the three dropdowns and the zoom-out button on *every* size change,
--- and there is no single update hook to hang a sweep off.
+-- The case that forces a shared helper is a FrameXML window that repaints its own chrome from a
+-- path we do not own — a size toggle that re-Shows the borders, the title and the dropdowns on
+-- *every* change, with no single update hook to hang a sweep off.
 --
 -- WHAT IT DOES. `NE.squelch.Hide(region)` hides the region and installs an `OnShow` hook that
 -- re-hides it. That covers Frames (which have OnShow scripts). Textures and FontStrings do NOT

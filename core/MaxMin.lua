@@ -156,7 +156,7 @@ function MM.Build(parent, opts)
 
     -- THE CALLBACK FIRST, THE ART AFTER. `IsMaximized` prefers the owner's live answer, and the owner
     -- has not changed its mind yet at this point in the click -- so drawing here draws the state we
-    -- are LEAVING. It used to self-correct only because the world map happens to call
+    -- are LEAVING. It used to self-correct only because the owner of the day happened to call
     -- SetStateSilently on the way back through; an owner that does not leaves the button showing the
     -- opposite of what it is, permanently, in both the glyph and the tooltip.
     local fn = goingMax and self._onMax or self._onMin
