@@ -590,3 +590,21 @@ L["Visit a profession trainer in a major city to learn a new profession. You may
 
 L["Current chat (%s)"] = "Текущий чат (%s)"
 L["Link to"] = "Отправить ссылку в"
+
+-- ============================================================================
+-- ADDON MANAGER
+-- ============================================================================
+
+L["Addon Manager"] = "Менеджер аддонов"
+L["Load out of date AddOns"] = "Загружать устаревшие"
+L["Search..."] = "Поиск..."
+L["Enable All"] = "Включить все"
+L["Disable All"] = "Выключить все"
+L["Cancel"] = "Отмена"
+L["OK / Reload"] = "ОК / Релоад"
+L["Disabled"] = "Отключен"
+L["Parent Disabled"] = "База отключена"
+L["Out of date"] = "Устарел"
+L["Load on Demand"] = "По требованию"
+L["AddOns"] = "Аддоны"
+L["Addon Memory:"] = "Память аддонов:"

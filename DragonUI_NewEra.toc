@@ -102,6 +102,11 @@ integration\DragonUIProtection.lua
 # --- qa: in-game harness + manifest (owner: QA/Harness Engineer) ---
 qa\Harness.lua
 
+# --- Addon Manager (Forever UI style, dependencies tree, system info) ---
+# AddonManager.lua = standalone window to enable/disable addons without logging out.
+# Replaces the default AddonList with a modern DragonUI interface.
+modules\addonmanager\AddonManager.lua
+
 # NOTE: no Character panel and no Collections window here — DragonUI ships both of those itself, so
 # ours were removed rather than kept as a second replacement over the top.
 

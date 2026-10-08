@@ -581,3 +581,21 @@ L["Visit a profession trainer in a major city to learn a new profession. You may
 
 L["Current chat (%s)"] = true
 L["Link to"] = true
+
+-- ============================================================================
+-- ADDON MANAGER
+-- ============================================================================
+
+L["Addon Manager"] = true
+L["Load out of date AddOns"] = true
+L["Search..."] = true
+L["Enable All"] = true
+L["Disable All"] = true
+L["Cancel"] = true
+L["OK / Reload"] = true
+L["Disabled"] = true
+L["Parent Disabled"] = true
+L["Out of date"] = true
+L["Load on Demand"] = true
+L["AddOns"] = true
+L["Addon Memory:"] = true
